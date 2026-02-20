@@ -56,7 +56,7 @@ function MapUpdater({ drones, autoFollow }) {
     if (!autoFollow) return;
     if (drones.length > 0) {
       const group = new L.featureGroup(
-        drones.map(drone => 
+        drones.map(drone =>
           L.marker([drone.latitude, drone.longitude])
         )
       );
@@ -148,17 +148,17 @@ function DroneMap({ socket }) {
               Real-time drone positions and flight paths
             </p>
           </div>
-          
+
           <div className="flex items-center space-x-4">
             <div className="text-sm text-gray-600">
               <span className="font-medium">{drones.length}</span> drones active
             </div>
 
             {/* RPC status */}
-            <div className={`px-2 py-1 rounded text-xs font-medium ${rpcOk === true ? 'bg-green-100 text-green-800' : rpcOk === false ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800' }`} title="AirSim RPC connectivity">
+            <div className={`px-2 py-1 rounded text-xs font-medium ${rpcOk === true ? 'bg-green-100 text-green-800' : rpcOk === false ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'}`} title="AirSim RPC connectivity">
               RPC: {rpcOk === true ? 'OK' : rpcOk === false ? 'Not Confirmed' : 'Unknown'}
             </div>
-            
+
             {/* Legend */}
             <div className="flex items-center space-x-3 text-xs">
               <div className="flex items-center">
@@ -196,13 +196,13 @@ function DroneMap({ socket }) {
 
       {/* Map */}
       <div className="flex-1">
-        <MapContainer 
-          center={[40.7128, -74.0060]} 
+        <MapContainer
+          center={[40.7128, -74.0060]}
           zoom={13}
           scrollWheelZoom={true}
           zoomControl={true}
           className="w-full h-full"
-          whenCreated={mapInstance => { mapRef.current = mapInstance; }}
+          ref={mapRef}
         >
           <LayersControl position="topright">
             <LayersControl.BaseLayer checked name="Street Map">
@@ -247,47 +247,45 @@ function DroneMap({ socket }) {
                   <h3 className="font-semibold text-gray-900 mb-2">
                     {drone.drone_id}
                   </h3>
-                  
+
                   <div className="space-y-1 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-600">Status:</span>
-                      <span className={`font-medium ${
-                        drone.mode === 'EMERGENCY' ? 'text-red-600' :
-                        drone.altitude > 1 ? 'text-green-600' :
-                        drone.armed ? 'text-yellow-600' :
-                        'text-gray-600'
-                      }`}>
+                      <span className={`font-medium ${drone.mode === 'EMERGENCY' ? 'text-red-600' :
+                          drone.altitude > 1 ? 'text-green-600' :
+                            drone.armed ? 'text-yellow-600' :
+                              'text-gray-600'
+                        }`}>
                         {drone.mode}
                       </span>
                     </div>
-                    
+
                     <div className="flex justify-between">
                       <span className="text-gray-600">Altitude:</span>
                       <span>{drone.altitude.toFixed(1)}m</span>
                     </div>
-                    
+
                     <div className="flex justify-between">
                       <span className="text-gray-600">Battery:</span>
-                      <span className={`font-medium ${
-                        drone.battery < 20 ? 'text-red-600' :
-                        drone.battery < 40 ? 'text-yellow-600' :
-                        'text-green-600'
-                      }`}>
+                      <span className={`font-medium ${drone.battery < 20 ? 'text-red-600' :
+                          drone.battery < 40 ? 'text-yellow-600' :
+                            'text-green-600'
+                        }`}>
                         {drone.battery.toFixed(0)}%
                       </span>
                     </div>
-                    
+
                     <div className="flex justify-between">
                       <span className="text-gray-600">Speed:</span>
                       <span>{drone.speed.toFixed(1)} m/s</span>
                     </div>
-                    
+
                     <div className="flex justify-between">
                       <span className="text-gray-600">Heading:</span>
                       <span>{drone.heading.toFixed(0)}°</span>
                     </div>
                   </div>
-                  
+
                   <div className="mt-3 pt-2 border-t border-gray-200">
                     <p className="text-xs text-gray-500">
                       Position: {drone.latitude.toFixed(6)}, {drone.longitude.toFixed(6)}

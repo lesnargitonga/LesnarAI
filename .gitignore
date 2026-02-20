@@ -1,27 +1,48 @@
-# System/Env
-.venv/
-airsim-env/
-backend-env/
-node_modules/
+# ============================
+# Lesnar AI — .gitignore
+# ============================
+
+# ---------- Python ----------
 __pycache__/
 *.pyc
-.DS_Store
+*.pyo
+*.egg-info/
+dist/
+build/
+*.whl
+
+# ---------- Virtual Environments ----------
+.venv/
+.venv-wsl/
+backend-env/
+airsim-env/
+legacy/
+
+# ---------- Node / Frontend ----------
+node_modules/
+frontend/build/
+
+# ---------- IDE / Editor ----------
 .vscode/
 .idea/
+*.code-workspace
+.qodo/
 
-# Secrets (never commit)
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Secrets (NEVER commit) ----------
 .env
 .env.*
 !.env.example
 
-# Large binaries & External Deps (The "Heavy" stuff)
+# ---------- External / Large Dependencies ----------
 externals/
-airsim/
-drone_simulation/
-unreal_tools/
-.qodo/
+legacy_airsim/
 
-# Data & Logs
+# ---------- Data, Logs & Training Artifacts ----------
 datasets/
 dataset/
 data/
@@ -32,12 +53,13 @@ lightning_logs/
 *.bag
 *.npz
 *.log
+*.csv
 
-# Build artifacts
-build/
-dist/
+# ---------- Build / Cache ----------
 *.egg-info/
 
-# Optional: Large models (uncomment if you want to exclude them)
+# ---------- Models (large binaries) ----------
+# Uncomment to exclude trained model files from Git:
 # models/*.pth
 # models/*.pt
+# models/*.onnx

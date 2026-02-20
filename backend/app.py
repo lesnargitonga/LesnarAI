@@ -1052,11 +1052,11 @@ def broadcast_telemetry():
                 except Exception:
                     # Never interrupt telemetry.
                     pass
-            time.sleep(1)  # 1 Hz update rate
+            time.sleep(0.2)  # 5 Hz update rate
             
         except Exception as e:
             logger.error(f"Error broadcasting telemetry: {e}")
-            time.sleep(1)
+            time.sleep(0.2)
 
 def start_telemetry_broadcast():
     """Start telemetry broadcasting thread"""
@@ -1194,7 +1194,7 @@ if __name__ == '__main__':
     print("-" * 40)
     
     # Initialize demo fleet
-    # initialize_demo_fleet()
+    initialize_demo_fleet()
 
     # Start telemetry broadcasting
     start_telemetry_broadcast()

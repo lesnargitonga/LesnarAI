@@ -197,7 +197,7 @@ export default function LocationPicker({
           zoomControl={true}
           className="w-full"
           style={{ height: 220 }}
-          whenCreated={(map) => { mapRef.current = map; }}
+          ref={mapRef}
         >
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

@@ -9,64 +9,176 @@ The canonical execution model is split by responsibility.
 Windows hosts Docker Desktop.
 Ubuntu in WSL2 hosts PX4 and Gazebo.
 
-## Architecture summary
+## 🚀 Complete Setup Guide (A-Z)
 
-1. Flight control and simulation
-    PX4 SITL with Gazebo Harmonic.
+**Prerequisites:**
+- ✅ Windows 10/11 with WSL2 (Ubuntu 22.04)
+- ✅ Docker Desktop running with WSL integration
+- ✅ PX4-Autopilot installed at `~/PX4-Autopilot` in WSL
 
-2. Bridge process
-    The script in `training/px4_teacher_collect_gz.py` connects to PX4 via MAVSDK and exchanges telemetry and commands via Redis.
+---
 
-3. Backend services
-    Flask API, Redis, and TimescaleDB run under Docker Compose.
+### Step A: Start Backend Services (WSL Terminal 1)
 
-4. Operator interface
-    React dashboard (optional for verification; the API tests are the authoritative proof).
+```bash
+cd ~/lesnar/LesnarAI
+docker compose --env-file .env.example down -v
+docker compose --env-file .env.example up -d
+```
 
-See [Architecture Design Document](docs/architecture.md) for additional details.
+**Wait 20 seconds**, then verify:
+```bash
+curl -H "X-API-Key: example-operator-key" http://localhost:5000/api/health
+```
+**Expected:** `{"status":"ok"}`
 
-## Supported runbook
+---
 
-This runbook is written for Ubuntu inside WSL2.
-PX4 SITL and Gazebo are Linux first.
+### Step B: Start Gazebo with Obstacles (WSL Terminal 1 - same)
 
-## Validation status
+```bash
+cd ~/lesnar/LesnarAI
+gz sim -v4 -r obstacles.sdf &
+```
 
-As of 2026 02 10:
+**⏱️ WAIT 15 SECONDS** - Gazebo GUI will open showing:
+- 25 colored skyscrapers
+- 50 red spires
+- 10 green trees
+- Empty sky (drone will spawn next)
 
-1. `docker compose --env-file .env.example up -d --build` starts TimescaleDB, Redis, and the backend API.
-2. `GET /api/health` returns `ok` when called with `X-API-Key`.
-3. Frontend installs and builds with `npm ci` and `npm run build`.
-4. The PX4 and Gazebo bridge and data collection workflows are validated.
-5. The dashboard integration with the live bridge should work by design, but the API checks below are the required proof of execution.
+---
 
-## Judge mode
+### Step C: Start PX4 Autopilot (WSL Terminal 1 - same)
 
-1. Start the backend stack
-    ```bash
-    docker compose --env-file .env.example up -d --build
-    ```
+```bash
+sleep 15
+cd ~/PX4-Autopilot
+export PX4_GZ_MODEL="x500"
+PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
+```
 
-2. Prove the backend is healthy and authenticated
-    ```bash
-    set -a; source .env.example; set +a
-    curl -s -H "X-API-Key: $LESNAR_OPERATOR_API_KEY" http://localhost:5000/api/health | jq .status
-    ```
+**Expected output:** `INFO [commander] Ready for takeoff!`
 
-3. Optional, build the frontend
-    ```bash
-    cd frontend
-    npm ci
-    npm run build
-    ```
+**✅ Check Gazebo:** You should now see the x500 drone spawned among the obstacles.
 
-4. Run PX4 and Gazebo, then run the bridge process, then list drones
-    ```bash
-    set -a; source .env.example; set +a
-    curl -s -H "X-API-Key: $LESNAR_OPERATOR_API_KEY" http://localhost:5000/api/drones | jq .
-    ```
+---
 
-If the bridge is connected and publishing, the output includes `SENTINEL-01`.
+### Step D: Start Bridge Script (WSL Terminal 2 - NEW TERMINAL)
+
+```bash
+cd ~/lesnar/LesnarAI
+source .venv-wsl/bin/activate
+mkdir -p dataset/px4_teacher
+python training/px4_teacher_collect_gz.py --duration 300 --base_speed 6.0 --max_speed 12.0
+```
+
+**Expected output:**
+```
+[INFO] --> Redis connected (Bridge Established) at 127.0.0.1:6379
+[INFO] --> Connected!
+[INFO] --> Arming...
+[INFO] --> Starting A* Pathfinding (ONLINE)...
+```
+
+**Note:** Speed increased to 6-12 m/s for better presentation visibility.
+
+---
+
+### Step E: View Database (Browser)
+
+Open in your browser: **http://localhost:8080**
+
+**Login credentials:**
+- Server: `timescaledb`
+- Username: `lesnar`
+- Password: `example-password`
+- Database: `lesnar`
+
+**Click on tables to view:**
+- `drones` - Registered drones
+- `flight_log` - Real-time telemetry (refreshing)
+- `command_logs` - Command history
+
+---
+
+### Step F: View Frontend Dashboard (Browser)
+
+Open in your browser: **http://localhost:3000**
+
+*(Frontend must be running - see Optional Frontend section below)*
+
+---
+
+### Step G: Test API Commands (WSL Terminal 3 or Windows PowerShell)
+
+**Check drone status:**
+```bash
+curl -H "X-API-Key: example-operator-key" http://localhost:5000/api/drones | jq
+```
+**Expected:** Shows `SENTINEL-01` with position, battery, etc.
+
+**Command takeoff:**
+```bash
+curl -X POST -H "X-API-Key: example-operator-key" \
+  -H "Content-Type: application/json" \
+  -d '{"altitude": 10}' \
+  http://localhost:5000/api/drones/SENTINEL-01/takeoff
+```
+**Watch Gazebo:** Drone lifts off to 10 meters
+
+**Navigate to waypoint:**
+```bash
+curl -X POST -H "X-API-Key: example-operator-key" \
+  -H "Content-Type: application/json" \
+  -d '{"latitude": 47.3977, "longitude": 8.5456, "altitude": 50}' \
+  http://localhost:5000/api/drones/SENTINEL-01/goto
+```
+**Watch Gazebo:** Drone navigates avoiding obstacles using A* pathfinding
+
+**Land:**
+```bash
+curl -X POST -H "X-API-Key: example-operator-key" \
+  http://localhost:5000/api/drones/SENTINEL-01/land
+```
+**Watch Gazebo:** Drone descends and lands
+
+---
+
+## 🌐 All URLs for Presentation
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| **Backend API** | http://localhost:5000 | REST API for drone control |
+| **API Health** | http://localhost:5000/api/health | Backend health check |
+| **API Drones** | http://localhost:5000/api/drones | List registered drones |
+| **Adminer (Database)** | http://localhost:8080 | View telemetry in TimescaleDB |
+| **Frontend Dashboard** | http://localhost:3000 | React UI (if running) |
+
+---
+
+## 📦 Optional: Frontend Dashboard
+
+```bash
+# WSL Terminal (separate from others)
+cd ~/lesnar/LesnarAI/frontend
+npm start
+```
+
+Then open: **http://localhost:3000**
+
+---
+
+## 🎯 Quick Reference
+
+**API Key:** `example-operator-key`
+**Database Password:** `example-password`
+**Drone ID:** `SENTINEL-01`
+
+**Key Files:**
+- Obstacles: `obstacles.sdf` (85 obstacles)
+- Bridge: `training/px4_teacher_collect_gz.py`
+- Backend: `backend/app.py`
 
 ## Requirements
 
@@ -177,21 +289,41 @@ There are two supported setups.
     bash PX4-Autopilot/Tools/setup/ubuntu.sh
     ```
 
-2. Start SITL with Gazebo Harmonic
+2. **Copy obstacles world to PX4** (one-time setup)
     ```bash
-    cd ~/PX4-Autopilot
-    make px4_sitl gz_x500
+    cp ~/lesnar/LesnarAI/obstacles.sdf ~/PX4-Autopilot/Tools/simulation/gz/worlds/obstacles.sdf
     ```
 
-SITL exposes MAVLink on UDP port 14540 by default.
+3. **Start Gazebo with obstacles world FIRST**
+    ```bash
+    cd ~/lesnar/LesnarAI
+    gz sim -v4 -r obstacles.sdf &
+    ```
+    
+    Wait 10-15 seconds for Gazebo GUI to open showing:
+    - 25 colored skyscrapers (80-150m tall)
+    - 50 red spires (200m tall)
+    - 10 green trees (ground level)
+
+4. **Then start PX4 to connect to running Gazebo**
+    ```bash
+    sleep 10
+    cd ~/PX4-Autopilot
+    export PX4_GZ_MODEL="x500"
+    PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
+    ```
+
+The x500 drone will spawn in Gazebo among the obstacles. PX4 exposes MAVLink on UDP port 14540 by default.
+
+**Note:** The two-step startup (Gazebo first, then PX4) is required because the obstacles world is large (85 obstacles) and needs time to load before PX4 connects.
 
 ## Bridge process
 
 1. Create a Python virtual environment
     ```bash
     cd ~/lesnar/LesnarAI
-    python3 -m venv .venv_wsl
-    source .venv_wsl/bin/activate
+    python3 -m venv .venv-wsl
+    source .venv-wsl/bin/activate
     pip install -U pip
     pip install mavsdk numpy redis async-timeout
     ```

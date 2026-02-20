@@ -1,0 +1,9 @@
+{
+    "short_name": "Lesnar AI",
+    "name": "Lesnar AI - Drone Control Dashboard",
+    "icons": [],
+    "start_url": ".",
+    "display": "standalone",
+    "theme_color": "#1e293b",
+    "background_color": "#ffffff"
+}

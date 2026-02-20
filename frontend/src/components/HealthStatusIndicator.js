@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Wifi, WifiOff, Server, Clock, BrainCircuit, FileCheck, FileX } from 'lucide-react';
+import { Wifi, WifiOff, Server, Clock, Cpu, FileCheck, FileX } from 'lucide-react';
 import { BACKEND_URL } from '../config';
 
 const HealthStatusIndicator = () => {
@@ -57,7 +57,7 @@ const HealthStatusIndicator = () => {
           </div>
           {health.segmentation?.enabled && (
             <div className="flex items-center" title={`Segmentation Model: ${health.segmentation.model_path}`}>
-              <BrainCircuit className="h-3 w-3 mr-1" />
+              <Cpu className="h-3 w-3 mr-1" />
               {health.segmentation.model_exists ? <FileCheck className="h-3 w-3" /> : <FileX className="h-3 w-3" />}
             </div>
           )}

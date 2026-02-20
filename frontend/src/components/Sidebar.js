@@ -1,12 +1,12 @@
 import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { 
-  Home, 
-  Map, 
-  Rocket, 
-  Navigation, 
-  BarChart3, 
-  Settings, 
+import {
+  Home,
+  Map,
+  Rocket,
+  Navigation,
+  BarChart3,
+  Settings,
   X,
   Zap
 } from 'lucide-react';
@@ -27,7 +27,7 @@ function Sidebar({ isOpen, onClose }) {
     <>
       {/* Mobile backdrop */}
       {isOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
           onClick={onClose}
         />
@@ -69,8 +69,8 @@ function Sidebar({ isOpen, onClose }) {
                   onClick={() => window.innerWidth < 1024 && onClose()}
                   className={`
                     group flex items-center px-2 py-2 text-sm font-medium rounded-md transition-colors
-                    ${isActive 
-                      ? 'bg-gray-800 text-white' 
+                    ${isActive
+                      ? 'bg-gray-800 text-white'
                       : 'text-gray-300 hover:bg-gray-700 hover:text-white'
                     }
                   `}
@@ -94,7 +94,7 @@ function Sidebar({ isOpen, onClose }) {
               <span className="ml-2 text-sm text-gray-300">System Active</span>
             </div>
             <div className="mt-2 text-xs text-gray-400">
-              © 2025 Lesnar AI Ltd.
+              © 2026 Lesnar AI Ltd.
             </div>
           </div>
         </div>
