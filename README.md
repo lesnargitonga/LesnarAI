@@ -70,7 +70,7 @@ PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
 cd ~/lesnar/LesnarAI
 source .venv-wsl/bin/activate
 mkdir -p dataset/px4_teacher
-python training/px4_teacher_collect_gz.py --duration 300 --base_speed 6.0 --max_speed 12.0
+python3 training/px4_teacher_collect_gz.py --duration 300 --base_speed 6.0 --max_speed 12.0
 ```
 
 **Expected output:**
@@ -431,10 +431,5 @@ If WSL cannot reach Redis at 127.0.0.1, use the Windows only Docker mode and set
 ├── docker-compose.yml   # Compose stack
 └── .env.example          # Example environment values for smoke tests
 ```
-
-## Legacy components
-
-Legacy AirSim related assets are under `legacy/`.
-They are not part of the canonical runbook.
 
 Copyright © 2026 Lesnar Autonomous Systems. All Rights Reserved.

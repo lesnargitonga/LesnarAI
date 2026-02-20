@@ -54,7 +54,7 @@ PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
 cd ~/lesnar/LesnarAI
 source .venv-wsl/bin/activate
 mkdir -p dataset/px4_teacher
-python training/px4_teacher_collect_gz.py --duration 300
+python3 training/px4_teacher_collect_gz.py --duration 300
 ```
 
 **✅ Success indicators:**
@@ -233,7 +233,7 @@ docker compose exec redis redis-cli ping
 # Restart bridge
 cd ~/lesnar/LesnarAI
 source .venv-wsl/bin/activate
-python training/px4_teacher_collect_gz.py --duration 300
+python3 training/px4_teacher_collect_gz.py --duration 300
 ```
 
 ### If Adminer won't login:
