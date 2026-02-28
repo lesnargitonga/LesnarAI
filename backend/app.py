@@ -4,6 +4,7 @@ Flask-based REST API for drone control and monitoring
 """
 
 import os
+import re
 import sys
 import json
 import time as _time
@@ -14,6 +15,8 @@ from flask_cors import CORS
 # Force engineio to use threading driver to avoid importing Tornado
 os.environ.setdefault('ENGINEIO_ASYNC_MODE', 'threading')
 from flask_socketio import SocketIO, emit
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import threading
 import time
 import socket
@@ -44,8 +47,27 @@ app.config['SQLALCHEMY_DATABASE_URI'] = get_database_url()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"],
+                  storage_uri="memory://")
 
 db.init_app(app)
+
+# --- Constants ---
+TELEMETRY_RATE_HZ = 5
+TELEMETRY_SLEEP_S = 1.0 / TELEMETRY_RATE_HZ
+DB_SYNC_INTERVAL = 3
+WAYPOINT_DURATION_ESTIMATE_S = 60.0
+SEG_LOG_MAX_ROWS = 500
+REDIS_RETRY_DELAY_S = 5
+DEFAULT_TAKEOFF_ALT = 10.0
+FLYING_ALTITUDE_THRESHOLD = 1.0
+LOW_BATTERY_THRESHOLD = 20.0
+MAX_DRONE_ID_LENGTH = 128
+DRONE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_\-\.]+$')
+LAT_MIN, LAT_MAX = -90.0, 90.0
+LON_MIN, LON_MAX = -180.0, 180.0
+ALT_MIN, ALT_MAX = 0.0, 10000.0
+CONFIG_ALLOWED_KEYS = {'drone_settings', 'api_settings', 'ai_settings', 'logging'}
 
 
 def _maybe_run_db_migrations():
@@ -85,7 +107,7 @@ if USE_AIRSIM and AirSimAdapter is not None:
         logger.warning(f"Failed to initialize AirSim adapter: {e}. Falling back to simulator.")
         airsim_adapter = None
 telemetry_thread = None
-telemetry_running = False
+_telemetry_stop = threading.Event()
 _START_TIME = _time.time()
 
 
@@ -100,6 +122,10 @@ _REDIS_PORT = int(os.environ.get('REDIS_PORT') or 6379)
 
 def _auth_enabled() -> bool:
     return bool(_ADMIN_KEY or _OPERATOR_KEY)
+
+if not _auth_enabled():
+    logger.warning("API authentication is DISABLED (LESNAR_ADMIN_API_KEY / LESNAR_OPERATOR_API_KEY not set). "
+                   "Set these environment variables before deploying to production.")
 
 
 def _get_role_from_request() -> str | None:
@@ -136,6 +162,41 @@ def require_role(required: str):
     return decorator
 
 # API Routes
+
+def _safe_error(msg: str, e: Exception, status: int = 500):
+    """Return a JSON error response without exposing internal exception details."""
+    logger.error(f"{msg}: {e}")
+    return jsonify({'success': False, 'error': msg}), status
+
+
+def _validate_drone_id(drone_id: str) -> str | None:
+    """Return an error message if drone_id is invalid, else None."""
+    if not drone_id or len(drone_id) > MAX_DRONE_ID_LENGTH:
+        return 'drone_id must be 1-128 characters'
+    if not DRONE_ID_PATTERN.match(drone_id):
+        return 'drone_id may only contain alphanumeric characters, hyphens, underscores, and dots'
+    return None
+
+
+def _validate_coordinates(lat, lon, alt=None) -> str | None:
+    """Return an error message if coordinates are out of bounds, else None."""
+    try:
+        lat, lon = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return 'latitude and longitude must be numeric'
+    if not (LAT_MIN <= lat <= LAT_MAX):
+        return f'latitude must be between {LAT_MIN} and {LAT_MAX}'
+    if not (LON_MIN <= lon <= LON_MAX):
+        return f'longitude must be between {LON_MIN} and {LON_MAX}'
+    if alt is not None:
+        try:
+            alt = float(alt)
+        except (TypeError, ValueError):
+            return 'altitude must be numeric'
+        if not (ALT_MIN <= alt <= ALT_MAX):
+            return f'altitude must be between {ALT_MIN} and {ALT_MAX}'
+    return None
+
 
 def _try_audit(drone_id, action, payload, success, error):
     try:
@@ -259,9 +320,9 @@ def db_health():
     """Basic DB connectivity check."""
     try:
         db.session.execute(db.text('SELECT 1'))
-        return jsonify({'success': True, 'status': 'ok', 'database_url': app.config.get('SQLALCHEMY_DATABASE_URI')})
+        return jsonify({'success': True, 'status': 'ok'})
     except Exception as e:
-        return jsonify({'success': False, 'status': 'error', 'error': str(e)}), 500
+        return _safe_error('Database health check failed', e)
 
 @app.route('/api/drones', methods=['GET'])
 @require_role('operator')
@@ -279,13 +340,16 @@ def get_drones():
         })
     except Exception as e:
         logger.error(f"Error getting drones: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to retrieve drones', e)
 
 @app.route('/api/drones/<drone_id>', methods=['GET'])
 @require_role('operator')
 def get_drone(drone_id):
     """Get specific drone state"""
     try:
+        id_err = _validate_drone_id(drone_id)
+        if id_err:
+            return jsonify({'success': False, 'error': id_err}), 400
         if airsim_adapter is not None:
             state = airsim_adapter.get_state(drone_id)
             if state is None:
@@ -303,7 +367,7 @@ def get_drone(drone_id):
             })
     except Exception as e:
         logger.error(f"Error getting drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to retrieve drone', e)
 
 @app.route('/api/drones', methods=['POST'])
 @require_role('operator')
@@ -313,13 +377,17 @@ def create_drone():
         data = request.get_json()
         drone_id = data.get('drone_id')
         position = data.get('position')  # [lat, lon, alt]
-        
+
         if not drone_id:
             return jsonify({'success': False, 'error': 'drone_id required'}), 400
-        
+
+        id_err = _validate_drone_id(drone_id)
+        if id_err:
+            return jsonify({'success': False, 'error': id_err}), 400
+
         if position:
             position = tuple(position)
-        
+
         success = fleet.add_drone(drone_id, position)
         if success:
             try:
@@ -332,17 +400,16 @@ def create_drone():
                 except Exception:
                     pass
                 _try_audit(drone_id, 'create_drone', {'position': list(position) if position else None}, False, f'db_error:{e}')
-                return jsonify({'success': False, 'error': f'Database error: {e}'}), 500
+                return _safe_error('Failed to persist drone', e)
 
             _try_audit(drone_id, 'create_drone', {'position': list(position) if position else None}, True, None)
             safe_log_event('DRONE_CREATED', drone_id=drone_id, payload={'position': list(position) if position else None})
             return jsonify({'success': True, 'message': f'Drone {drone_id} created'})
         else:
             return jsonify({'success': False, 'error': 'Drone already exists'}), 409
-    
+
     except Exception as e:
-        logger.error(f"Error creating drone: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to create drone', e)
 
 @app.route('/api/drones/<drone_id>', methods=['DELETE'])
 @require_role('operator')
@@ -365,7 +432,7 @@ def delete_drone(drone_id):
     
     except Exception as e:
         logger.error(f"Error deleting drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to delete drone', e)
 
 @app.route('/api/drones/<drone_id>/arm', methods=['POST'])
 @require_role('operator')
@@ -386,7 +453,7 @@ def arm_drone(drone_id):
     
     except Exception as e:
         logger.error(f"Error arming drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to arm drone', e)
 
 @app.route('/api/drones/<drone_id>/disarm', methods=['POST'])
 @require_role('operator')
@@ -407,7 +474,7 @@ def disarm_drone(drone_id):
     
     except Exception as e:
         logger.error(f"Error disarming drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to disarm drone', e)
 
 
 def _publish_command(drone_id: str, action: str, params: dict | None = None) -> None:
@@ -430,7 +497,7 @@ def takeoff_drone(drone_id):
     """Takeoff a drone"""
     try:
         data = request.get_json() or {}
-        altitude = data.get('altitude', 10.0)
+        altitude = data.get('altitude', DEFAULT_TAKEOFF_ALT)
 
         # Always publish to Redis (Teacher/real drones).
         _publish_command(drone_id, 'takeoff', {'altitude': altitude})
@@ -461,7 +528,7 @@ def takeoff_drone(drone_id):
 
     except Exception as e:
         logger.error(f"Error takeoff drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to execute takeoff', e)
 
 @app.route('/api/drones/<drone_id>/land', methods=['POST'])
 @require_role('operator')
@@ -494,7 +561,7 @@ def land_drone(drone_id):
 
     except Exception as e:
         logger.error(f"Error landing drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to execute landing', e)
 
 @app.route('/api/drones/<drone_id>/goto', methods=['POST'])
 @require_role('operator')
@@ -504,10 +571,14 @@ def goto_drone(drone_id):
         data = request.get_json() or {}
         latitude = data.get('latitude')
         longitude = data.get('longitude')
-        altitude = data.get('altitude', 10.0)
+        altitude = data.get('altitude', DEFAULT_TAKEOFF_ALT)
 
         if latitude is None or longitude is None:
             return jsonify({'success': False, 'error': 'latitude and longitude required'}), 400
+
+        coord_err = _validate_coordinates(latitude, longitude, altitude)
+        if coord_err:
+            return jsonify({'success': False, 'error': coord_err}), 400
 
         # Always publish to Redis (Teacher/real drones).
         _publish_command(drone_id, 'goto', {'latitude': latitude, 'longitude': longitude, 'altitude': altitude})
@@ -537,7 +608,7 @@ def goto_drone(drone_id):
     
     except Exception as e:
         logger.error(f"Error navigating drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to navigate drone', e)
 
 @app.route('/api/drones/<drone_id>/mission', methods=['POST'])
 @require_role('operator')
@@ -547,15 +618,24 @@ def execute_mission(drone_id):
         data = request.get_json()
         waypoints = data.get('waypoints', [])
         mission_type = data.get('mission_type', 'CUSTOM')
-        
+
         if not waypoints:
             return jsonify({'success': False, 'error': 'waypoints required'}), 400
-        
+
+        # Validate each waypoint
+        for i, wp in enumerate(waypoints):
+            if not isinstance(wp, (list, tuple)) or len(wp) < 2:
+                return jsonify({'success': False, 'error': f'waypoint {i} must be [lat, lon, alt]'}), 400
+            alt = wp[2] if len(wp) > 2 else None
+            coord_err = _validate_coordinates(wp[0], wp[1], alt)
+            if coord_err:
+                return jsonify({'success': False, 'error': f'waypoint {i}: {coord_err}'}), 400
+
         drone = fleet.get_drone(drone_id)
         if not drone:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
         
-        estimated_duration = len(waypoints) * 60.0  # Rough estimate
+        estimated_duration = len(waypoints) * WAYPOINT_DURATION_ESTIMATE_S  # Rough estimate
         mission = Mission(
             waypoints=[tuple(wp) for wp in waypoints],
             mission_type=mission_type,
@@ -568,7 +648,7 @@ def execute_mission(drone_id):
                 mission_id, run_id = _db_create_mission_and_run(drone_id, mission_type, waypoints)
         except Exception as e:
             _try_audit(drone_id, 'mission_start', {'mission_type': mission_type, 'waypoints': waypoints}, False, f'db_error:{e}')
-            return jsonify({'success': False, 'error': f'Database error: {e}'}), 500
+            return _safe_error('Failed to persist mission', e)
 
         success = drone.execute_mission(mission)
         if success:
@@ -601,7 +681,7 @@ def execute_mission(drone_id):
     
     except Exception as e:
         logger.error(f"Error executing mission for drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to execute mission', e)
 
 
 @app.route('/api/missions/active', methods=['GET'])
@@ -634,7 +714,7 @@ def get_active_missions():
         return jsonify({'success': True, 'missions': missions, 'count': len(missions)})
     except Exception as e:
         logger.error(f"Error getting active missions: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to retrieve active missions', e)
 
 
 @app.route('/api/drones/<drone_id>/mission/pause', methods=['POST'])
@@ -663,7 +743,7 @@ def pause_mission(drone_id):
         })
     except Exception as e:
         logger.error(f"Error pausing mission for drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to pause mission', e)
 
 
 @app.route('/api/drones/<drone_id>/mission/resume', methods=['POST'])
@@ -692,7 +772,7 @@ def resume_mission(drone_id):
         })
     except Exception as e:
         logger.error(f"Error resuming mission for drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to resume mission', e)
 
 
 @app.route('/api/drones/<drone_id>/mission/stop', methods=['POST'])
@@ -721,10 +801,11 @@ def stop_mission(drone_id):
         })
     except Exception as e:
         logger.error(f"Error stopping mission for drone {drone_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to stop mission', e)
 
 @app.route('/api/emergency', methods=['POST'])
 @require_role('admin')
+@limiter.limit("5 per minute")
 def emergency_land_all():
     """Emergency land all drones"""
     try:
@@ -737,7 +818,7 @@ def emergency_land_all():
     
     except Exception as e:
         logger.error(f"Error during emergency landing: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Emergency landing failed', e)
 
 @app.route('/api/telemetry', methods=['GET'])
 @require_role('operator')
@@ -752,14 +833,14 @@ def get_telemetry():
             'fleet_status': {
                 'total_drones': len(states),
                 'armed_drones': len([s for s in states if s.armed]),
-                'flying_drones': len([s for s in states if s.altitude > 1.0]),
-                'low_battery_drones': len([s for s in states if s.battery < 20.0])
+                'flying_drones': len([s for s in states if s.altitude > FLYING_ALTITUDE_THRESHOLD]),
+                'low_battery_drones': len([s for s in states if s.battery < LOW_BATTERY_THRESHOLD])
             }
         })
     
     except Exception as e:
         logger.error(f"Error getting telemetry: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to retrieve telemetry', e)
 
 @app.route('/api/obstacles', methods=['GET'])
 @require_role('operator')
@@ -772,9 +853,10 @@ def get_obstacles():
         return jsonify(geojson)
     except Exception as e:
         logger.error(f"Error loading obstacles: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to load obstacles', e)
 
 @app.route('/api/geocode/suggest', methods=['GET'])
+@limiter.limit("30 per minute")
 def geocode_suggest():
     """Suggest locations for a query string via Nominatim (OpenStreetMap)."""
     try:
@@ -801,7 +883,7 @@ def geocode_suggest():
         return jsonify({'success': True, 'results': out})
     except Exception as e:
         logger.error(f"Error in geocode_suggest: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Geocoding failed', e)
 
 @app.route('/api/geocode/reverse', methods=['GET'])
 def geocode_reverse():
@@ -824,7 +906,7 @@ def geocode_reverse():
         })
     except Exception as e:
         logger.error(f"Error in geocode_reverse: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Reverse geocoding failed', e)
 
 @app.route('/api/health', methods=['GET'])
 @require_role('operator')
@@ -887,9 +969,17 @@ def health():
         except Exception as _e:
             rpc_ok = None
 
+        # Database check
+        db_ok = True
+        try:
+            db.session.execute(db.text('SELECT 1'))
+        except Exception:
+            db_ok = False
+
         report = {
             'service': 'Lesnar AI Backend',
-            'status': 'ok',
+            'status': 'ok' if db_ok else 'degraded',
+            'db_connected': db_ok,
             'time': datetime.now().isoformat(),
             'uptime_seconds': round(uptime_s, 1),
             'versions': {
@@ -907,7 +997,7 @@ def health():
         return jsonify(report)
     except Exception as e:
         logger.error(f"Error in /api/health: {e}")
-        return jsonify({'status': 'error', 'error': str(e)}), 500
+        return _safe_error('Health check failed', e)
 
 @app.route('/api/config', methods=['GET'])
 @require_role('admin')
@@ -923,17 +1013,25 @@ def get_config():
         return jsonify({'success': True, 'config': cfg})
     except Exception as e:
         logger.error(f"Error reading config: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to read configuration', e)
 
 @app.route('/api/config', methods=['POST'])
 @require_role('admin')
+@limiter.limit("10 per minute")
 def update_config():
-    """Update config.json safely with minimal validation."""
+    """Update config.json safely with schema validation."""
     try:
         data = request.get_json() or {}
         if 'config' not in data:
             return jsonify({'success': False, 'error': 'config field required'}), 400
         cfg = data['config']
+
+        if not isinstance(cfg, dict):
+            return jsonify({'success': False, 'error': 'config must be a JSON object'}), 400
+        unknown_keys = set(cfg.keys()) - CONFIG_ALLOWED_KEYS
+        if unknown_keys:
+            return jsonify({'success': False, 'error': f'unknown config keys: {", ".join(sorted(unknown_keys))}'}), 400
+
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         config_path = os.path.join(repo_root, 'config.json')
         backup_path = config_path + ".bak"
@@ -950,9 +1048,10 @@ def update_config():
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error updating config: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to update configuration', e)
 
 @app.route('/api/logs/segmentation/latest', methods=['GET'])
+@require_role('operator')
 def get_latest_segmentation_log():
     """Return latest segmentation diagnostics CSV as JSON rows (limited)."""
     try:
@@ -970,12 +1069,12 @@ def get_latest_segmentation_log():
             rdr = csv.DictReader(f)
             for i, row in enumerate(rdr):
                 rows.append(row)
-                if i >= 500:
+                if i >= SEG_LOG_MAX_ROWS:
                     break
         return jsonify({'success': True, 'file': str(latest), 'rows': rows})
     except Exception as e:
         logger.error(f"Error reading latest segmentation log: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return _safe_error('Failed to read segmentation logs', e)
 
 # WebSocket Events for Real-time Communication
 
@@ -998,9 +1097,8 @@ def handle_subscribe_telemetry():
 
 def broadcast_telemetry():
     """Broadcast telemetry data to all connected clients"""
-    global telemetry_running
     sync_tick = 0
-    while telemetry_running:
+    while not _telemetry_stop.is_set():
         try:
             states = fleet.get_all_states()
             telemetry_data = {
@@ -1009,15 +1107,15 @@ def broadcast_telemetry():
                 'fleet_status': {
                     'total_drones': len(states),
                     'armed_drones': len([s for s in states if s.armed]),
-                    'flying_drones': len([s for s in states if s.altitude > 1.0]),
-                    'low_battery_drones': len([s for s in states if s.battery < 20.0])
+                    'flying_drones': len([s for s in states if s.altitude > FLYING_ALTITUDE_THRESHOLD]),
+                    'low_battery_drones': len([s for s in states if s.battery < LOW_BATTERY_THRESHOLD])
                 }
             }
-            
+
             socketio.emit('telemetry_update', telemetry_data)
 
             # Best-effort mission run status sync (keeps DB consistent without storing high-rate telemetry).
-            sync_tick = (sync_tick + 1) % 3
+            sync_tick = (sync_tick + 1) % DB_SYNC_INTERVAL
             if sync_tick == 0:
                 try:
                     if airsim_adapter is None:
@@ -1052,20 +1150,20 @@ def broadcast_telemetry():
                 except Exception:
                     # Never interrupt telemetry.
                     pass
-            time.sleep(0.2)  # 5 Hz update rate
-            
+            _telemetry_stop.wait(TELEMETRY_SLEEP_S)
+
         except Exception as e:
             logger.error(f"Error broadcasting telemetry: {e}")
-            time.sleep(0.2)
+            _telemetry_stop.wait(TELEMETRY_SLEEP_S)
 
 def start_telemetry_broadcast():
     """Start telemetry broadcasting thread"""
-    global telemetry_thread, telemetry_running
-    
-    if telemetry_running:
+    global telemetry_thread
+
+    if not _telemetry_stop.is_set() and telemetry_thread is not None and telemetry_thread.is_alive():
         return
-    
-    telemetry_running = True
+
+    _telemetry_stop.clear()
     telemetry_thread = threading.Thread(target=broadcast_telemetry)
     telemetry_thread.daemon = True
     telemetry_thread.start()
@@ -1073,21 +1171,19 @@ def start_telemetry_broadcast():
 
 def stop_telemetry_broadcast():
     """Stop telemetry broadcasting"""
-    global telemetry_running
-    telemetry_running = False
+    _telemetry_stop.set()
     logger.info("Telemetry broadcasting stopped")
 
 # --- Redis Bridge ---
 redis_bridge_thread = None
-redis_bridge_running = False
+_redis_bridge_stop = threading.Event()
 
 def redis_bridge_loop():
     """Listen for telemetry from external agents (Teacher/Sentinel)."""
-    global redis_bridge_running
     r = None
     pubsub = None
 
-    while redis_bridge_running:
+    while not _redis_bridge_stop.is_set():
         try:
             if r is None:
                 r = redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, db=0, socket_timeout=5)
@@ -1139,15 +1235,16 @@ def redis_bridge_loop():
         except redis.ConnectionError:
             if r: logger.warning("Redis connection lost. Retrying...")
             r = None
-            time.sleep(5)
+            _redis_bridge_stop.wait(REDIS_RETRY_DELAY_S)
         except Exception as e:
             logger.error(f"Redis Bridge error: {e}")
-            time.sleep(1)
+            _redis_bridge_stop.wait(1)
 
 def start_redis_bridge():
-    global redis_bridge_thread, redis_bridge_running
-    if redis_bridge_running: return
-    redis_bridge_running = True
+    global redis_bridge_thread
+    if not _redis_bridge_stop.is_set() and redis_bridge_thread is not None and redis_bridge_thread.is_alive():
+        return
+    _redis_bridge_stop.clear()
     redis_bridge_thread = threading.Thread(target=redis_bridge_loop, daemon=True)
     redis_bridge_thread.start()
 
@@ -1216,7 +1313,7 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("\nShutting down server...")
         stop_telemetry_broadcast()
-        redis_bridge_running = False
+        _redis_bridge_stop.set()
 
         # Clean up drones
         for drone_id in list(fleet.drones.keys()):
