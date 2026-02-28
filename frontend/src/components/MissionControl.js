@@ -1,7 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
-import { Navigation, MapPin, Clock, Pause, Play, Square } from 'lucide-react';
+import api from '../api';
+import {
+  Navigation,
+  MapPin,
+  Clock,
+  Pause,
+  Play,
+  Square,
+  Shield,
+  Zap,
+  Target,
+  Cpu,
+  Layers,
+  ChevronRight,
+  TrendingUp,
+  AlertTriangle
+} from 'lucide-react';
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
 import { useDrones } from '../context/DroneContext';
 
 function WaypointClickCapture({ onAdd }) {
@@ -32,12 +48,7 @@ function MissionControl({ socket }) {
   const [missionDefaultAlt, setMissionDefaultAlt] = useState(10);
   const [missionWaypoints, setMissionWaypoints] = useState([]); // [{lat,lng,alt}]
 
-  const [orbitRadiusM, setOrbitRadiusM] = useState(60);
-  const [orbitPoints, setOrbitPoints] = useState(8);
-
   const [showAdvanced, setShowAdvanced] = useState(false);
-
-  const [missionTemplateName, setMissionTemplateName] = useState('');
   const [savedTemplates, setSavedTemplates] = useState([]);
   const [selectedTemplateName, setSelectedTemplateName] = useState('');
 
@@ -47,43 +58,26 @@ function MissionControl({ socket }) {
   const selectedDrone = useMemo(() => drones.find(d => d.drone_id === selectedDroneId) || null, [drones, selectedDroneId]);
   const selectedIsFlying = Boolean(selectedDrone && Number(selectedDrone.altitude || 0) > 1);
 
-  const loadTemplates = () => {
-    try {
-      const raw = window.localStorage.getItem('lesnar.missions.templates');
-      const parsed = raw ? JSON.parse(raw) : [];
-      if (Array.isArray(parsed)) setSavedTemplates(parsed);
-    } catch {
-      setSavedTemplates([]);
-    }
-  };
-
-  const persistTemplates = (templates) => {
-    try {
-      window.localStorage.setItem('lesnar.missions.templates', JSON.stringify(templates));
-    } catch {
-      // ignore
-    }
-    setSavedTemplates(templates);
-  };
-
   useEffect(() => {
-    loadTemplates();
-  }, []);
+    // Load templates
+    const raw = window.localStorage.getItem('lesnar.missions.templates');
+    setSavedTemplates(raw ? JSON.parse(raw) : []);
+
+    if (socket) {
+      socket.on('mission_status', () => refreshActiveMissions());
+      return () => socket.off('mission_status');
+    }
+  }, [socket]);
 
   useEffect(() => {
     if (!selectedDroneId && drones.length > 0) setSelectedDroneId(drones[0].drone_id);
   }, [drones, selectedDroneId]);
 
-  useEffect(() => {
-    fetchDrones && fetchDrones();
-  }, [fetchDrones]);
-
   const refreshActiveMissions = async () => {
     setMissionsLoading(true);
     try {
-      const res = await axios.get('/api/missions/active');
+      const res = await api.get('/api/missions/active');
       if (res.data?.success) setActiveMissions(res.data.missions || []);
-      else setActiveMissions([]);
     } catch {
       setActiveMissions([]);
     } finally {
@@ -93,109 +87,103 @@ function MissionControl({ socket }) {
 
   useEffect(() => {
     refreshActiveMissions();
-    const id = setInterval(refreshActiveMissions, 5000);
+    const id = setInterval(refreshActiveMissions, 10000);
     return () => clearInterval(id);
   }, []);
 
-  const waitForAirborne = async (droneId, timeoutMs = 20000) => {
-    const started = Date.now();
-    while (Date.now() - started < timeoutMs) {
-      try {
-        const res = await axios.get(`/api/drones/${encodeURIComponent(droneId)}`);
-        const st = res.data?.drone;
-        if (st && Number(st.altitude || 0) > 1) return true;
-      } catch {
-        // ignore transient
+  const generatePattern = (pattern) => {
+    if (!selectedDrone) return;
+    const centerLat = Number(selectedDrone.latitude);
+    const centerLng = Number(selectedDrone.longitude);
+    const latFactor = 1 / 111000;
+    const lonFactor = 1 / (111000 * Math.cos((centerLat * Math.PI) / 180));
+    const gen = [];
+
+    if (pattern === 'ORBIT') {
+      const pts = 12;
+      const r = 80;
+      for (let i = 0; i < pts; i++) {
+        const a = (2 * Math.PI * i) / pts;
+        gen.push({ lat: centerLat + Math.sin(a) * r * latFactor, lng: centerLng + Math.cos(a) * r * lonFactor, alt: missionDefaultAlt });
       }
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise(r => setTimeout(r, 800));
+      setMissionType('SEC_ORBIT');
+    } else if (pattern === 'SWEEP') {
+      const r = 100;
+      gen.push({ lat: centerLat, lng: centerLng, alt: missionDefaultAlt });
+      gen.push({ lat: centerLat + r * latFactor, lng: centerLng + r * lonFactor, alt: missionDefaultAlt + 5 });
+      gen.push({ lat: centerLat + r * latFactor, lng: centerLng - r * lonFactor, alt: missionDefaultAlt + 10 });
+      gen.push({ lat: centerLat, lng: centerLng, alt: missionDefaultAlt });
+      setMissionType('TACT_SWEEP');
     }
-    return false;
-  };
 
-  const ensureAirborneIfNeeded = async (droneId) => {
-    if (!selectedDrone) return false;
-    if (Number(selectedDrone.altitude || 0) > 1) return true;
-    if (!selectedDrone.armed) {
-      setActionBanner({ type: 'error', message: 'Drone must be armed before auto takeoff.' });
-      return false;
-    }
-    setActionBanner({ type: 'success', message: `Auto takeoff initiated for ${droneId}` });
-    await takeoffDrone(droneId, missionDefaultAlt);
-    const ok = await waitForAirborne(droneId);
-    if (!ok) setActionBanner({ type: 'error', message: `Timed out waiting for ${droneId} to become airborne` });
-    return ok;
+    setMissionWaypoints(gen);
   };
-
-  const mapCenter = useMemo(() => {
-    const lat = Number(selectedDrone?.latitude ?? 40.7128);
-    const lng = Number(selectedDrone?.longitude ?? -74.0060);
-    return [lat, lng];
-  }, [selectedDrone]);
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Mission Control</h1>
-        <p className="mt-1 text-sm text-gray-600">Plan, execute, and monitor drone missions</p>
+    <div className="p-8 space-y-10 fade-in">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between border-l-2 border-lesnar-accent pl-6 py-2">
+        <div>
+          <h1 className="text-3xl font-black text-white uppercase tracking-tighter">
+            Mission Control <span className="text-lesnar-accent">// COMMAND</span>
+          </h1>
+          <p className="text-xs font-mono text-gray-500 uppercase tracking-widest mt-1">
+            Tactical Operations Planning & Execution
+          </p>
+        </div>
       </div>
 
       {actionBanner && (
-        <div className={`mb-4 rounded-md border px-4 py-3 text-sm ${actionBanner.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
-          {actionBanner.message}
+        <div className={`rounded-2xl border px-6 py-4 flex items-center space-x-4 animate-pulse ${actionBanner.type === 'error' ? 'bg-lesnar-danger/10 border-lesnar-danger/30 text-lesnar-danger' : 'bg-lesnar-success/10 border-lesnar-success/30 text-lesnar-success'
+          }`}>
+          <AlertTriangle className="h-5 w-5 shrink-0" />
+          <p className="text-xs font-mono font-bold uppercase">{actionBanner.message}</p>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Mission Planning */}
-        <div className="lg:col-span-2 card">
-          <div className="flex items-center justify-between mb-4 gap-3">
-            <h2 className="text-lg font-semibold flex items-center">
-              <Navigation className="h-5 w-5 mr-2" />
-              Mission Planning
-            </h2>
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-700">Drone</label>
-              <select
-                value={selectedDroneId}
-                onChange={(e) => {
-                  setSelectedDroneId(e.target.value);
-                  setMissionWaypoints([]);
-                  setMissionType('CUSTOM');
-                  setMissionDefaultAlt(10);
-                  setOrbitRadiusM(60);
-                  setOrbitPoints(8);
-                  setMissionTemplateName('');
-                  setSelectedTemplateName('');
-                }}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                {drones.map(d => (
-                  <option key={d.drone_id} value={d.drone_id}>{d.drone_id}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-10">
+        {/* Planning Engine */}
+        <div className="xl:col-span-2 space-y-8">
+          <div className="card space-y-8">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 bg-lesnar-accent/10 border border-lesnar-accent/30 rounded-xl flex items-center justify-center neo-glow">
+                  <Cpu className="h-6 w-6 text-lesnar-accent" />
+                </div>
+                <h2 className="text-xl font-black text-white uppercase tracking-tight">Mission Engine</h2>
+              </div>
 
-          {!selectedDrone ? (
-            <div className="text-center py-12 text-gray-500">
-              <p>No drones available. Create a drone in Drone Fleet.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="border rounded-md overflow-hidden">
-                <MapContainer
-                  center={mapCenter}
-                  zoom={13}
-                  scrollWheelZoom={true}
-                  zoomControl={true}
-                  className="w-full"
-                  style={{ height: 360 }}
+              <div className="flex items-center space-x-4">
+                <span className="text-[10px] font-mono text-gray-500 uppercase">Target Asset</span>
+                <select
+                  value={selectedDroneId}
+                  onChange={(e) => setSelectedDroneId(e.target.value)}
+                  className="bg-navy-black/60 border border-white/10 rounded-xl px-4 py-2 text-xs font-mono text-white focus:border-lesnar-accent outline-none"
                 >
-                  <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  />
+                  {drones.map(d => (
+                    <option key={d.drone_id} value={d.drone_id}>{d.drone_id}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Tactical Map */}
+              <div className="rounded-3xl overflow-hidden border border-white/5 relative group h-[400px]">
+                <div className="absolute inset-0 bg-navy-black pointer-events-none opacity-20 z-10" />
+                <div className="absolute top-4 left-4 z-20 pointer-events-none">
+                  <div className="bg-black/40 backdrop-blur-md border border-white/5 px-3 py-1.5 rounded-lg text-[8px] font-mono text-lesnar-accent uppercase tracking-widest">
+                    Live Satellite Relay // Active
+                  </div>
+                </div>
+
+                <MapContainer
+                  center={selectedDrone ? [selectedDrone.latitude, selectedDrone.longitude] : [0, 0]}
+                  zoom={15}
+                  zoomControl={false}
+                  className="w-full h-full filter grayscale brightness-50 contrast-125"
+                >
+                  <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
                   <WaypointClickCapture
                     onAdd={(ll) => setMissionWaypoints(prev => ([...prev, { lat: ll.lat, lng: ll.lng, alt: missionDefaultAlt }]))}
                   />
@@ -203,405 +191,227 @@ function MissionControl({ socket }) {
                   {missionWaypoints.length > 0 && (
                     <Polyline
                       positions={missionWaypoints.map(w => [w.lat, w.lng])}
-                      pathOptions={{ color: '#2563eb', weight: 3 }}
+                      pathOptions={{ color: '#00FDFF', weight: 2, dashArray: '10, 10' }}
                     />
                   )}
 
                   {missionWaypoints.map((w, idx) => (
-                    <Marker key={`${w.lat}-${w.lng}-${idx}`} position={[w.lat, w.lng]}>
-                      <Popup>
-                        <div className="text-sm">
-                          <div className="font-medium">Waypoint {idx + 1}</div>
-                          <div>{w.lat.toFixed(6)}, {w.lng.toFixed(6)}</div>
-                          <div>Alt: {Number(w.alt || 0).toFixed(1)}m</div>
-                        </div>
-                      </Popup>
-                    </Marker>
+                    <Marker key={idx} position={[w.lat, w.lng]} icon={L.divIcon({
+                      className: 'wp-marker',
+                      html: `<div class="w-4 h-4 rounded-full border-2 border-lesnar-accent bg-lesnar-accent/20 flex items-center justify-center text-[8px] font-bold text-white shadow-[0_0_10px_rgba(0,253,255,0.5)]">${idx + 1}</div>`,
+                      iconSize: [16, 16]
+                    })} />
                   ))}
                 </MapContainer>
+
+                {/* Map HUD Components */}
+                <div className="absolute bottom-4 left-4 right-4 z-20 flex justify-between items-end pointer-events-none">
+                  <div className="glass-dark border border-white/5 p-3 rounded-xl pointer-events-auto">
+                    <div className="flex items-center space-x-2 text-[8px] font-mono text-gray-500 uppercase mb-2">
+                      <Layers className="h-3 w-3" />
+                      <span>Generator patterns</span>
+                    </div>
+                    <div className="flex space-x-2">
+                      <button onClick={() => generatePattern('ORBIT')} className="px-3 py-1 bg-white/5 border border-white/10 rounded text-[9px] font-bold text-white hover:border-lesnar-accent/30 transition-all">ORBIT</button>
+                      <button onClick={() => generatePattern('SWEEP')} className="px-3 py-1 bg-white/5 border border-white/10 rounded text-[9px] font-bold text-white hover:border-lesnar-accent/30 transition-all">SWEEP</button>
+                    </div>
+                  </div>
+                  <button onClick={() => setMissionWaypoints([])} className="glass-dark border border-white/5 p-3 rounded-xl text-lesnar-danger pointer-events-auto hover:bg-lesnar-danger/10 transition-all">
+                    Reset Plane
+                  </button>
+                </div>
               </div>
 
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-medium text-gray-900">Waypoints</div>
-                  <button type="button" className="text-sm text-blue-700 hover:text-blue-800" onClick={() => setMissionWaypoints([])}>
-                    Clear
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Mission Type</label>
-                    <input
-                      type="text"
-                      value={missionType}
-                      onChange={(e) => setMissionType(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="CUSTOM"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Default Alt (m)</label>
-                    <input
-                      type="number"
-                      value={missionDefaultAlt}
-                      onChange={(e) => setMissionDefaultAlt(Number(e.target.value))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
+              {/* Mission Params */}
+              <div className="space-y-6">
+                <div className="space-y-4">
+                  <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest border-b border-white/5 pb-2">Operation Parameters</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-mono text-gray-600 uppercase">Mission Signature</label>
+                      <input
+                        value={missionType}
+                        onChange={(e) => setMissionType(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs font-mono text-white focus:border-lesnar-accent outline-none"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-mono text-gray-600 uppercase">Ceiling (M)</label>
+                      <input
+                        type="number"
+                        value={missionDefaultAlt}
+                        onChange={(e) => setMissionDefaultAlt(Number(e.target.value))}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs font-mono text-white focus:border-lesnar-accent outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
 
-                <div className="text-sm text-gray-700">Click the map to add waypoints. Use edit/reorder below.</div>
+                <div className="space-y-4 flex-1">
+                  <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest border-b border-white/5 pb-2">Waypoint Manifest</h3>
+                  <div className="max-h-56 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
+                    {missionWaypoints.map((w, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5 group hover:border-lesnar-accent/20 transition-all">
+                        <div className="flex items-center space-x-3">
+                          <span className="text-[10px] font-mono text-lesnar-accent font-bold">#{idx + 1}</span>
+                          <div className="flex space-x-4">
+                            <div className="flex items-center space-x-1.5">
+                              <div className="h-1.5 w-1.5 rounded-full bg-lesnar-accent" />
+                              <span className="text-[8px] font-mono text-gray-500 uppercase">Sorties</span>
+                            </div>
+                            <div className="flex items-center space-x-1.5">
+                              <div className="h-1.5 w-1.5 rounded-full bg-lesnar-success" />
+                              <span className="text-[8px] font-mono text-gray-500 uppercase">Battery</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <span className="text-[10px] font-mono text-gray-500">{w.alt}M</span>
+                          <button onClick={() => setMissionWaypoints(prev => prev.filter((_, i) => i !== idx))} className="text-lesnar-danger opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Square className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {missionWaypoints.length === 0 && (
+                      <div className="text-center py-10 border-2 border-dashed border-white/5 rounded-3xl">
+                        <p className="text-[10px] font-mono text-gray-600 uppercase">Awaiting Map Handshake...</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
 
-                <div className="flex items-center justify-between pt-1">
-                  <div className="text-xs text-gray-500">Primary flow: add waypoints → Takeoff + Mission</div>
+                <div className="pt-4 space-y-3">
                   <button
-                    type="button"
-                    className="text-sm text-blue-700 hover:text-blue-800"
-                    onClick={() => setShowAdvanced(v => !v)}
+                    disabled={missionWaypoints.length === 0 || pending}
+                    onClick={async () => {
+                      setPending(true);
+                      const payload = missionWaypoints.map(w => [w.lat, w.lng, Number(w.alt)]);
+                      await executeMission(selectedDrone.drone_id, payload, missionType);
+                      setPending(false);
+                      refreshActiveMissions();
+                    }}
+                    className="w-full py-4 bg-lesnar-accent/10 border border-lesnar-accent/30 rounded-2xl text-xs font-black text-lesnar-accent uppercase tracking-widest hover:bg-lesnar-accent/20 transition-all disabled:opacity-30 neo-glow"
                   >
-                    {showAdvanced ? 'Hide Advanced' : 'Show Advanced'}
+                    Initiate Deployment
+                  </button>
+                  <button
+                    disabled={selectedIsFlying || !selectedDrone?.armed || pending || missionWaypoints.length === 0}
+                    onClick={async () => {
+                      if (!selectedDrone) return;
+                      setPending(true);
+                      try {
+                        await takeoffDrone(selectedDrone.drone_id, missionDefaultAlt);
+                        const payload = missionWaypoints.map(w => [w.lat, w.lng, Number(w.alt)]);
+                        await executeMission(selectedDrone.drone_id, payload, missionType);
+                        refreshActiveMissions();
+                      } catch (err) {
+                        setActionBanner({ type: 'error', message: `Auto-launch failed: ${err.message || 'unknown error'}` });
+                      } finally {
+                        setPending(false);
+                      }
+                    }}
+                    className="w-full py-4 bg-lesnar-success/10 border border-lesnar-success/30 rounded-2xl text-xs font-black text-lesnar-success uppercase tracking-widest hover:bg-lesnar-success/20 transition-all disabled:opacity-30"
+                  >
+                    Auto-Launch + Mission
                   </button>
                 </div>
-
-                {showAdvanced && (
-                  <>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Orbit radius (m)</label>
-                        <input
-                          type="number"
-                          value={orbitRadiusM}
-                          onChange={(e) => setOrbitRadiusM(Number(e.target.value))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Orbit points</label>
-                        <input
-                          type="number"
-                          value={orbitPoints}
-                          onChange={(e) => setOrbitPoints(Number(e.target.value))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => {
-                        const centerLat = Number(selectedDrone.latitude || 40.7128);
-                        const centerLng = Number(selectedDrone.longitude || -74.0060);
-                        const pts = Math.max(3, Math.min(48, Number(orbitPoints || 8)));
-                        const r = Math.max(5, Math.min(2000, Number(orbitRadiusM || 60)));
-                        const latFactor = 1 / 111000;
-                        const lonFactor = 1 / (111000 * Math.cos((centerLat * Math.PI) / 180));
-                        const gen = [];
-                        for (let i = 0; i < pts; i += 1) {
-                          const a = (2 * Math.PI * i) / pts;
-                          const dLat = Math.sin(a) * r * latFactor;
-                          const dLng = Math.cos(a) * r * lonFactor;
-                          gen.push({ lat: centerLat + dLat, lng: centerLng + dLng, alt: missionDefaultAlt });
-                        }
-                        setMissionWaypoints(gen);
-                        setMissionType('ORBIT');
-                      }}
-                    >
-                      Generate Orbit Mission
-                    </button>
-                  </>
-                )}
-
-                <div className="border rounded-md overflow-auto max-h-52">
-                  {missionWaypoints.length === 0 ? (
-                    <div className="px-3 py-3 text-sm text-gray-500">No waypoints yet.</div>
-                  ) : (
-                    missionWaypoints.map((w, idx) => (
-                      <div key={idx} className="flex items-center justify-between px-3 py-2 border-t first:border-t-0">
-                        <div className="text-sm">
-                          <div className="font-medium">#{idx + 1}</div>
-                          <div className="text-xs text-gray-500">{w.lat.toFixed(6)}, {w.lng.toFixed(6)}</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            value={Number(w.alt || missionDefaultAlt)}
-                            onChange={(e) => {
-                              const nextAlt = Number(e.target.value);
-                              setMissionWaypoints(prev => prev.map((p, i) => i === idx ? ({ ...p, alt: nextAlt }) : p));
-                            }}
-                            className="w-24 px-2 py-1 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            title="Waypoint altitude"
-                          />
-                          <button
-                            type="button"
-                            className={`text-sm text-gray-700 hover:text-gray-900 ${idx === 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
-                            disabled={idx === 0}
-                            onClick={() => {
-                              setMissionWaypoints(prev => {
-                                const next = [...prev];
-                                const tmp = next[idx - 1];
-                                next[idx - 1] = next[idx];
-                                next[idx] = tmp;
-                                return next;
-                              });
-                            }}
-                          >
-                            Up
-                          </button>
-                          <button
-                            type="button"
-                            className={`text-sm text-gray-700 hover:text-gray-900 ${idx === missionWaypoints.length - 1 ? 'opacity-40 cursor-not-allowed' : ''}`}
-                            disabled={idx === missionWaypoints.length - 1}
-                            onClick={() => {
-                              setMissionWaypoints(prev => {
-                                const next = [...prev];
-                                const tmp = next[idx + 1];
-                                next[idx + 1] = next[idx];
-                                next[idx] = tmp;
-                                return next;
-                              });
-                            }}
-                          >
-                            Down
-                          </button>
-                          <button type="button" className="text-sm text-red-700 hover:text-red-800" onClick={() => setMissionWaypoints(prev => prev.filter((_, i) => i !== idx))}>
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {showAdvanced && (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Template name</label>
-                        <input
-                          type="text"
-                          value={missionTemplateName}
-                          onChange={(e) => setMissionTemplateName(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          placeholder="e.g., Perimeter Sweep"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Load template</label>
-                        <select
-                          value={selectedTemplateName}
-                          onChange={(e) => {
-                            const name = e.target.value;
-                            setSelectedTemplateName(name);
-                            const t = savedTemplates.find(x => x.name === name);
-                            if (t) {
-                              setMissionType(t.missionType || 'CUSTOM');
-                              setMissionDefaultAlt(Number(t.defaultAlt || 10));
-                              setMissionWaypoints(Array.isArray(t.waypoints) ? t.waypoints : []);
-                            }
-                          }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        >
-                          <option value="">Select…</option>
-                          {savedTemplates.map(t => (
-                            <option key={t.name} value={t.name}>{t.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className={`btn-secondary ${(!missionTemplateName || missionWaypoints.length === 0) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        disabled={!missionTemplateName || missionWaypoints.length === 0}
-                        onClick={() => {
-                          const name = missionTemplateName.trim();
-                          if (!name) return;
-                          const next = savedTemplates.filter(t => t.name !== name);
-                          next.unshift({ name, missionType, defaultAlt: missionDefaultAlt, waypoints: missionWaypoints });
-                          persistTemplates(next.slice(0, 20));
-                          setSelectedTemplateName(name);
-                          setActionBanner({ type: 'success', message: `Saved template: ${name}` });
-                        }}
-                      >
-                        Save Template
-                      </button>
-                      <button
-                        type="button"
-                        className={`btn-danger ${(!selectedTemplateName) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        disabled={!selectedTemplateName}
-                        onClick={() => {
-                          const name = selectedTemplateName;
-                          const next = savedTemplates.filter(t => t.name !== name);
-                          persistTemplates(next);
-                          setSelectedTemplateName('');
-                          setActionBanner({ type: 'success', message: `Deleted template: ${name}` });
-                        }}
-                      >
-                        Delete Template
-                      </button>
-                    </div>
-                  </>
-                )}
-
-                <button
-                  type="button"
-                  className={`btn-success ${(missionWaypoints.length === 0 || !selectedIsFlying || pending) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={missionWaypoints.length === 0 || !selectedIsFlying || pending}
-                  onClick={async () => {
-                    try {
-                      setPending(true);
-                      if (!selectedIsFlying) {
-                        setActionBanner({ type: 'error', message: 'Drone must be airborne to start a mission. Takeoff first.' });
-                        return;
-                      }
-                      if (missionWaypoints.length === 0) {
-                        setActionBanner({ type: 'error', message: 'Add at least one waypoint.' });
-                        return;
-                      }
-                      const payload = missionWaypoints.map(w => [w.lat, w.lng, Number(w.alt || missionDefaultAlt)]);
-                      await executeMission(selectedDrone.drone_id, payload, missionType || 'CUSTOM');
-                      setActionBanner({ type: 'success', message: `Mission sent to ${selectedDrone.drone_id}` });
-                      refreshActiveMissions();
-                    } catch {
-                      setActionBanner({ type: 'error', message: `Failed to start mission for ${selectedDrone.drone_id}` });
-                    } finally {
-                      setPending(false);
-                    }
-                  }}
-                >
-                  Send Mission
-                </button>
-
-                <button
-                  type="button"
-                  className={`btn-success ${(missionWaypoints.length === 0 || selectedIsFlying || !selectedDrone?.armed || pending) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={missionWaypoints.length === 0 || selectedIsFlying || !selectedDrone?.armed || pending}
-                  onClick={async () => {
-                    try {
-                      setPending(true);
-                      if (missionWaypoints.length === 0) {
-                        setActionBanner({ type: 'error', message: 'Add at least one waypoint.' });
-                        return;
-                      }
-                      const ok = await ensureAirborneIfNeeded(selectedDrone.drone_id);
-                      if (!ok) return;
-                      const payload = missionWaypoints.map(w => [w.lat, w.lng, Number(w.alt || missionDefaultAlt)]);
-                      await executeMission(selectedDrone.drone_id, payload, missionType || 'CUSTOM');
-                      setActionBanner({ type: 'success', message: `Takeoff + Mission sent to ${selectedDrone.drone_id}` });
-                      refreshActiveMissions();
-                    } catch {
-                      setActionBanner({ type: 'error', message: `Failed Takeoff + Mission for ${selectedDrone.drone_id}` });
-                    } finally {
-                      setPending(false);
-                    }
-                  }}
-                >
-                  Takeoff + Mission
-                </button>
-
-                {!selectedIsFlying && (
-                  <div className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded p-2">
-                    Missions require the drone to be airborne. Use Takeoff + Mission (requires Armed).
-                  </div>
-                )}
               </div>
             </div>
-          )}
+          </div>
         </div>
 
-        {/* Active Missions */}
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">Active Missions</h2>
-            <button type="button" className="btn-secondary" onClick={() => refreshActiveMissions()} disabled={missionsLoading}>
-              Refresh
-            </button>
-          </div>
+        {/* Live Mission Monitor */}
+        <div className="space-y-8">
+          <div className="card h-full flex flex-col">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center space-x-3">
+                <div className="h-8 w-8 bg-lesnar-success/10 border border-lesnar-success/30 rounded-lg flex items-center justify-center">
+                  <Target className="h-4 w-4 text-lesnar-success" />
+                </div>
+                <h2 className="text-sm font-black text-white uppercase tracking-widest">Active Sorties</h2>
+              </div>
+              <button
+                onClick={() => refreshActiveMissions()}
+                className="p-2 rounded-lg hover:bg-white/5 text-gray-500 hover:text-white transition-all"
+              >
+                <TrendingUp className="h-4 w-4" />
+              </button>
+            </div>
 
-          {missionsLoading ? (
-            <div className="text-sm text-gray-500">Loading…</div>
-          ) : (
-            <div className="space-y-3">
+            <div className="flex-1 space-y-6 overflow-y-auto pr-2 scrollbar-hide">
               {activeMissions.length === 0 ? (
-                <div className="text-center py-8 text-gray-400">
-                  <Play className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">No active missions</p>
+                <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-30">
+                  <Shield className="h-12 w-12 text-gray-500" />
+                  <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">No Active Combat Sorties</p>
                 </div>
               ) : (
                 activeMissions.map((m) => (
-                  <div key={m.drone_id} className="border rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-medium">{m.drone_id}</h3>
-                      <span className={`px-2 py-1 text-xs rounded ${m.status === 'PAUSED' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}`}>
-                        {m.status === 'PAUSED' ? 'Paused' : 'Active'}
-                      </span>
-                    </div>
-                    <div className="text-sm text-gray-600 space-y-1">
-                      <div className="flex items-center">
-                        <MapPin className="h-4 w-4 mr-1" />
-                        <span>
-                          {m.mission_type || 'CUSTOM'}
-                          {m.total_waypoints != null ? ` • ${m.total_waypoints} waypoints` : ''}
-                          {m.current_waypoint_index != null && m.total_waypoints != null ? ` • wp ${m.current_waypoint_index}/${m.total_waypoints}` : ''}
-                        </span>
+                  <div key={m.drone_id} className="p-6 rounded-2xl bg-white/5 border border-white/10 space-y-6 group hover:neo-glow transition-all">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="text-sm font-black text-white uppercase">{m.drone_id}</h4>
+                        <p className="text-[10px] font-mono text-lesnar-accent uppercase mt-1">{m.mission_type || 'TACTICAL_OPS'}</p>
                       </div>
-                      <div className="flex items-center">
-                        <Clock className="h-4 w-4 mr-1" />
-                        <span>{formatRemaining(m.estimated_remaining_s)} remaining</span>
+                      <div className="h-2 w-2 rounded-full bg-lesnar-success animate-pulse shadow-[0_0_10px_rgba(0,255,148,0.8)]" />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-navy-black/40 p-3 rounded-lg border border-white/5">
+                        <span className="text-[8px] font-mono text-gray-600 uppercase block mb-1">Status</span>
+                        <span className="text-[10px] font-bold text-white uppercase">{m.status}</span>
+                      </div>
+                      <div className="bg-navy-black/40 p-3 rounded-lg border border-white/5">
+                        <span className="text-[8px] font-mono text-gray-600 uppercase block mb-1">ETA</span>
+                        <span className="text-[10px] font-bold text-lesnar-accent font-mono">{formatRemaining(m.estimated_remaining_s)}</span>
                       </div>
                     </div>
-                    <div className="flex space-x-2 mt-3">
+
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-[8px] font-mono text-gray-500 uppercase">
+                        <span>Waypoint Progression</span>
+                        <span>{(m.current_waypoint_index / m.total_waypoints * 100).toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-lesnar-success transition-all duration-1000"
+                          style={{ width: `${(m.current_waypoint_index / m.total_waypoints * 100) || 0}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex space-x-3 pt-4 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
-                        type="button"
-                        className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-medium py-2 px-3 rounded-md transition-colors flex items-center justify-center"
                         onClick={async () => {
                           try {
-                            const endpoint = m.status === 'PAUSED' ? 'resume' : 'pause';
-                            await axios.post(`/api/drones/${encodeURIComponent(m.drone_id)}/mission/${endpoint}`);
-                            await refreshActiveMissions();
-                          } catch {
-                            setActionBanner({ type: 'error', message: `Failed to ${m.status === 'PAUSED' ? 'resume' : 'pause'} mission for ${m.drone_id}` });
-                          }
+                            await api.post(`/api/drones/${m.drone_id}/mission/stop`);
+                            refreshActiveMissions();
+                          } catch { }
                         }}
+                        className="flex-1 py-3 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/10"
                       >
-                        {m.status === 'PAUSED' ? (
-                          <>
-                            <Play className="h-4 w-4 mr-1" />
-                            Resume
-                          </>
-                        ) : (
-                          <>
-                            <Pause className="h-4 w-4 mr-1" />
-                            Pause
-                          </>
-                        )}
+                        ABORT
                       </button>
                       <button
-                        type="button"
-                        className="flex-1 btn-danger flex items-center justify-center"
                         onClick={async () => {
-                          if (!window.confirm(`Stop mission for ${m.drone_id}?`)) return;
                           try {
-                            await axios.post(`/api/drones/${encodeURIComponent(m.drone_id)}/mission/stop`);
-                            await refreshActiveMissions();
-                          } catch {
-                            setActionBanner({ type: 'error', message: `Failed to stop mission for ${m.drone_id}` });
-                          }
+                            const endpoint = m.status === 'PAUSED'
+                              ? `/api/drones/${m.drone_id}/mission/resume`
+                              : `/api/drones/${m.drone_id}/mission/pause`;
+                            await api.post(endpoint);
+                            refreshActiveMissions();
+                          } catch { }
                         }}
+                        className="flex-1 py-3 bg-lesnar-accent/10 border border-lesnar-accent/30 rounded-xl text-[10px] font-black uppercase tracking-widest text-lesnar-accent hover:bg-lesnar-accent/20"
                       >
-                        <Square className="h-4 w-4 mr-1" />
-                        Stop
+                        {m.status === 'PAUSED' ? 'RESUME' : 'PAUSE'}
                       </button>
                     </div>
                   </div>
                 ))
               )}
             </div>
-          )}
+          </div>
         </div>
       </div>
     </div>

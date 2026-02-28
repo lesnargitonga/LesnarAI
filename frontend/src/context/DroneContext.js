@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
-import axios from 'axios';
+import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
+import api from '../api';
 
 // Initial state
 const initialState = {
@@ -111,7 +111,7 @@ export function DroneProvider({ children }) {
   const fetchDrones = async () => {
     try {
       dispatch({ type: actionTypes.SET_LOADING, payload: true });
-      const response = await axios.get('/api/drones');
+      const response = await api.get('/api/drones');
       dispatch({ type: actionTypes.SET_DRONES, payload: response.data.drones });
     } catch (error) {
       dispatch({ type: actionTypes.SET_ERROR, payload: error.message });
@@ -120,9 +120,10 @@ export function DroneProvider({ children }) {
 
   const createDrone = async (droneData) => {
     try {
-      const response = await axios.post('/api/drones', droneData);
+      const response = await api.post('/api/drones', droneData);
       if (response.data.success) {
-        await fetchDrones(); // Refresh drone list
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
+        await fetchDrones();
         return response.data;
       }
     } catch (error) {
@@ -133,9 +134,10 @@ export function DroneProvider({ children }) {
 
   const deleteDrone = async (droneId) => {
     try {
-      const response = await axios.delete(`/api/drones/${droneId}`);
+      const response = await api.delete(`/api/drones/${droneId}`);
       if (response.data.success) {
         dispatch({ type: actionTypes.REMOVE_DRONE, payload: droneId });
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
         return response.data;
       }
     } catch (error) {
@@ -146,9 +148,10 @@ export function DroneProvider({ children }) {
 
   const armDrone = async (droneId) => {
     try {
-      const response = await axios.post(`/api/drones/${droneId}/arm`);
+      const response = await api.post(`/api/drones/${droneId}/arm`);
       if (response.data.success) {
         dispatch({ type: actionTypes.UPDATE_DRONE, payload: response.data.state });
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
       }
       return response.data;
     } catch (error) {
@@ -159,9 +162,10 @@ export function DroneProvider({ children }) {
 
   const disarmDrone = async (droneId) => {
     try {
-      const response = await axios.post(`/api/drones/${droneId}/disarm`);
+      const response = await api.post(`/api/drones/${droneId}/disarm`);
       if (response.data.success) {
         dispatch({ type: actionTypes.UPDATE_DRONE, payload: response.data.state });
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
       }
       return response.data;
     } catch (error) {
@@ -172,9 +176,10 @@ export function DroneProvider({ children }) {
 
   const takeoffDrone = async (droneId, altitude = 10) => {
     try {
-      const response = await axios.post(`/api/drones/${droneId}/takeoff`, { altitude });
+      const response = await api.post(`/api/drones/${droneId}/takeoff`, { altitude });
       if (response.data.success) {
         dispatch({ type: actionTypes.UPDATE_DRONE, payload: response.data.state });
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
       }
       return response.data;
     } catch (error) {
@@ -185,9 +190,10 @@ export function DroneProvider({ children }) {
 
   const landDrone = async (droneId) => {
     try {
-      const response = await axios.post(`/api/drones/${droneId}/land`);
+      const response = await api.post(`/api/drones/${droneId}/land`);
       if (response.data.success) {
         dispatch({ type: actionTypes.UPDATE_DRONE, payload: response.data.state });
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
       }
       return response.data;
     } catch (error) {
@@ -198,13 +204,14 @@ export function DroneProvider({ children }) {
 
   const gotoDrone = async (droneId, latitude, longitude, altitude) => {
     try {
-      const response = await axios.post(`/api/drones/${droneId}/goto`, {
+      const response = await api.post(`/api/drones/${droneId}/goto`, {
         latitude,
         longitude,
         altitude
       });
       if (response.data.success) {
         dispatch({ type: actionTypes.UPDATE_DRONE, payload: response.data.state });
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
       }
       return response.data;
     } catch (error) {
@@ -215,12 +222,13 @@ export function DroneProvider({ children }) {
 
   const executeMission = async (droneId, waypoints, missionType) => {
     try {
-      const response = await axios.post(`/api/drones/${droneId}/mission`, {
+      const response = await api.post(`/api/drones/${droneId}/mission`, {
         waypoints,
         mission_type: missionType
       });
       if (response.data.success) {
         dispatch({ type: actionTypes.UPDATE_DRONE, payload: response.data.state });
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
       }
       return response.data;
     } catch (error) {
@@ -231,9 +239,10 @@ export function DroneProvider({ children }) {
 
   const emergencyLandAll = async () => {
     try {
-      const response = await axios.post('/api/emergency');
+      const response = await api.post('/api/emergency');
       if (response.data.success) {
-        await fetchDrones(); // Refresh all drone states
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
+        await fetchDrones();
       }
       return response.data;
     } catch (error) {
@@ -242,12 +251,12 @@ export function DroneProvider({ children }) {
     }
   };
 
-  const updateTelemetry = (telemetryData) => {
+  const updateTelemetry = useCallback((telemetryData) => {
     dispatch({ type: actionTypes.UPDATE_TELEMETRY, payload: telemetryData });
     if (telemetryData.fleet_status) {
       dispatch({ type: actionTypes.UPDATE_FLEET_STATUS, payload: telemetryData.fleet_status });
     }
-  };
+  }, []);
 
   const selectDrone = (drone) => {
     dispatch({ type: actionTypes.SELECT_DRONE, payload: drone });
