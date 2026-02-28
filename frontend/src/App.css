@@ -1,66 +1,63 @@
-/* Custom styles for Lesnar AI */
+/* Futuristic styles for Lesnar AI */
 .gradient-bg {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #05070A 0%, #12161F 100%);
 }
 
 .card {
-  @apply bg-white rounded-lg shadow-md p-6;
+  @apply glass-dark rounded-xl p-6 transition-all duration-300 hover:neo-glow;
 }
 
 .btn-primary {
-  @apply bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors;
+  @apply bg-lesnar-accent/10 border border-lesnar-accent/30 text-lesnar-accent hover:bg-lesnar-accent/20 font-medium py-2 px-4 rounded-lg transition-all text-glow;
 }
 
 .btn-secondary {
-  @apply bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-4 rounded-md transition-colors;
+  @apply bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 font-medium py-2 px-4 rounded-lg transition-all;
 }
 
 .btn-danger {
-  @apply bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-md transition-colors;
+  @apply bg-lesnar-danger/10 border border-lesnar-danger/30 text-lesnar-danger hover:bg-lesnar-danger/20 font-medium py-2 px-4 rounded-lg transition-all;
 }
 
 .btn-success {
-  @apply bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-md transition-colors;
+  @apply bg-lesnar-success/10 border border-lesnar-success/30 text-lesnar-success hover:bg-lesnar-success/20 font-medium py-2 px-4 rounded-lg transition-all;
 }
 
 .status-online {
-  @apply text-green-500;
+  @apply text-lesnar-success text-glow;
 }
 
 .status-offline {
-  @apply text-red-500;
+  @apply text-lesnar-danger;
 }
 
 .status-warning {
-  @apply text-yellow-500;
+  @apply text-lesnar-warning;
 }
 
 /* Map styles */
 .leaflet-container {
   height: 100%;
   width: 100%;
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100;
+  @apply bg-navy-black;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded-full;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-400;
+  @apply bg-white/10 rounded-full hover:bg-white/20;
 }
 
 /* Animation classes */
 .fade-in {
-  animation: fadeIn 0.3s ease-in-out;
+  animation: fadeIn 0.4s ease-out;
 }
 
 @keyframes fadeIn {
@@ -68,31 +65,87 @@
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
 
-.pulse-slow {
-  animation: pulse 3s infinite;
-}
-
 /* Drone status indicators */
 .drone-armed {
-  @apply bg-yellow-500;
+  @apply bg-lesnar-warning animate-pulse;
 }
 
 .drone-flying {
-  @apply bg-green-500;
+  @apply bg-lesnar-success shadow-drone-flying;
 }
 
 .drone-landed {
-  @apply bg-gray-500;
+  @apply bg-gray-600;
 }
 
 .drone-emergency {
-  @apply bg-red-500;
+  @apply bg-lesnar-danger animate-ping;
+}
+
+/* Custom Tactical Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full hover:bg-lesnar-accent/40 transition-colors;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.6s ease-out forwards;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-down {
+  animation: slideDown 0.4s ease-out forwards;
+}
+
+.neo-glow {
+  box-shadow: 0 0 15px rgba(0, 245, 255, 0.15);
 }
 
 /* Chart styles */
@@ -102,5 +155,14 @@
 
 /* Loading spinner */
 .spinner {
-  @apply animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600;
+  @apply animate-spin rounded-full h-8 w-8 border-b-2 border-lesnar-accent;
+}
+
+/* HUD elements */
+.hud-border {
+  @apply border-lesnar-accent/20 relative cursor-crosshair;
+}
+
+.hud-corner {
+  @apply absolute w-2 h-2 border-lesnar-accent;
 }
