@@ -14,7 +14,7 @@ This folder is used to assemble proof artifacts for hackathon presentations.
 From repo root:
 
 ```bash
-python3 scripts/generate_presentation_evidence.py
+python3 docs/evidence/generate_presentation_evidence.py
 ```
 
 This creates:
