@@ -6,6 +6,7 @@ import math
 import os
 import time
 import heapq
+from collections import deque
 import numpy as np
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -57,6 +58,30 @@ def wrap_deg(a: float) -> float:
 def shortest_diff(current: float, target: float) -> float:
     return wrap_deg(target - current)
 
+
+def clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def ned_to_map_xy(north: float, east: float) -> tuple[float, float]:
+    # PX4 local position is NED (north, east). SDF/world map is ENU-like (x=east, y=north).
+    return east, north
+
+
+def map_xy_to_ned(map_x: float, map_y: float) -> tuple[float, float]:
+    # Convert map frame x/y back to NED north/east command channels.
+    return map_y, map_x
+
+
+def heading_to_map_yaw(heading_deg: float) -> float:
+    # PX4 heading: 0=north, 90=east (clockwise from north)
+    # map/math yaw: 0=+x(east), 90=+y(north) (counter-clockwise from +x)
+    return wrap_deg(90.0 - heading_deg)
+
+
+def map_yaw_to_heading(yaw_deg: float) -> float:
+    return wrap_deg(90.0 - yaw_deg)
+
 class Obstacle:
     def __init__(self, x, y, radius, height, is_box=False, dx=0, dy=0):
         self.x = x
@@ -86,6 +111,11 @@ class Obstacle:
             half_x = (self.dx / 2) + margin
             half_y = (self.dy / 2) + margin
             return (abs(px - self.x) < half_x) and (abs(py - self.y) < half_y)
+
+    def horizontal_size_m(self):
+        if self.is_box:
+            return max(self.dx, self.dy)
+        return self.radius * 2.0
 
 
 class Map:
@@ -169,6 +199,57 @@ class Map:
 
         return ranges
 
+    def obstacle_avoidance_field(
+        self,
+        px,
+        py,
+        rel_alt,
+        heading_map_deg,
+        lookahead_m=12.0,
+        corridor_deg=65.0,
+        safety_margin_m=1.4,
+        vertical_clearance_m=1.2,
+    ):
+        repel_x = 0.0
+        repel_y = 0.0
+        min_clearance = lookahead_m
+        max_threat = 0.0
+
+        for obs in self.obstacles:
+            # Ignore obstacles that are well below current flight altitude.
+            if rel_alt > (obs.height + vertical_clearance_m):
+                continue
+
+            clearance = max(0.0, obs.distance_to_point(px, py) - safety_margin_m)
+            if clearance > lookahead_m:
+                continue
+
+            vec_to_obs_x = obs.x - px
+            vec_to_obs_y = obs.y - py
+            center_dist = math.hypot(vec_to_obs_x, vec_to_obs_y)
+            if center_dist < 1e-6:
+                continue
+
+            bearing_to_obs = math.degrees(math.atan2(vec_to_obs_y, vec_to_obs_x))
+            rel_bearing = shortest_diff(heading_map_deg, bearing_to_obs)
+            if abs(rel_bearing) > corridor_deg:
+                continue
+
+            dir_away_x = -vec_to_obs_x / center_dist
+            dir_away_y = -vec_to_obs_y / center_dist
+
+            threat_dist = clamp((lookahead_m - clearance) / max(1e-6, lookahead_m), 0.0, 1.0)
+            heading_weight = clamp(math.cos(math.radians(rel_bearing)), 0.0, 1.0)
+            size_weight = clamp(obs.horizontal_size_m() / 4.0, 0.5, 2.0)
+            threat = threat_dist * heading_weight * size_weight
+
+            repel_x += threat * dir_away_x
+            repel_y += threat * dir_away_y
+            min_clearance = min(min_clearance, clearance)
+            max_threat = max(max_threat, threat)
+
+        return repel_x, repel_y, min_clearance, max_threat
+
 
 # --- PATHFINDING ---
 class GridMap:
@@ -227,11 +308,27 @@ def heuristic(a, b):
 
 
 def astar(grid_map, start, goal):
+    def nearest_free(node, max_radius=18):
+        if not grid_map.is_blocked(*node):
+            return node
+        nx, ny = node
+        for radius in range(1, max_radius + 1):
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    if max(abs(dx), abs(dy)) != radius:
+                        continue
+                    cand = (nx + dx, ny + dy)
+                    if not grid_map.is_blocked(*cand):
+                        return cand
+        return None
+
     start_node = grid_map.world_to_grid(start[0], start[1])
     goal_node = grid_map.world_to_grid(goal[0], goal[1])
 
-    if grid_map.is_blocked(*goal_node):
-        print("WARN: Goal is blocked!")
+    start_node = nearest_free(start_node)
+    goal_node = nearest_free(goal_node)
+
+    if start_node is None or goal_node is None:
         return []
 
     open_set = []
@@ -397,7 +494,7 @@ async def collect_data(args):
         await asyncio.sleep(0.05)
 
     def get_local_pos():
-        return dstate.x, dstate.y
+        return ned_to_map_xy(dstate.x, dstate.y)
 
     print("--> Starting A* Pathfinding (ONLINE)...")
     try:
@@ -428,6 +525,14 @@ async def collect_data(args):
         "cmd_vz",
         "cmd_yaw",
         "lidar_min",
+        "front_lidar_min",
+        "cross_track_m",
+        "heading_error_deg",
+        "sideslip_deg",
+        "progress_mps",
+        "geom_clearance_m",
+        "geom_threat",
+        "tilt_target_deg",
         "lidar_json",
         "goal_x",
         "goal_y",
@@ -440,24 +545,69 @@ async def collect_data(args):
     # Command smoothing / limits (stability)
     prev_vx_cmd = 0.0
     prev_vy_cmd = 0.0
-    max_accel = 2.0  # m/s^2
+    prev_fwd_cmd = 0.0
+    prev_lat_cmd = 0.0
+    max_accel_world = 3.5  # m/s^2
+    max_accel_body = 4.0  # m/s^2
+
+    # Safety shaping
+    if args.precision_mode:
+        slow_down_dist = 5.5
+        hard_stop_dist = 1.6
+    else:
+        slow_down_dist = 8.0
+        hard_stop_dist = 2.8
+    metrics_log_at = time.time()
 
     current_path = []
     path_index = 0
     goal_x, goal_y = 0, 0
+    recent_goals = deque(maxlen=5)
+
+    # Anti-loiter watchdog
+    last_progress_check = time.time()
+    progress_anchor = (0.0, 0.0)
 
     def pick_new_goal():
+        curr_x, curr_y = get_local_pos()
+        best = None
+        best_score = -1e9
+        for _ in range(200):
+            gx = np.random.randint(10, grid.width - 10)
+            gy = np.random.randint(10, grid.height - 10)
+            if grid.is_blocked(gx, gy):
+                continue
+            wx, wy = grid.grid_to_world(gx, gy)
+            dist = math.sqrt((wx - curr_x) ** 2 + (wy - curr_y) ** 2)
+            if dist < 45.0:
+                continue
+
+            nearest_recent = min(
+                [math.sqrt((wx - rx) ** 2 + (wy - ry) ** 2) for rx, ry in recent_goals],
+                default=999.0,
+            )
+            # Prefer farther goals and avoid recently visited areas.
+            score = dist + (0.35 * nearest_recent)
+            if score > best_score:
+                best_score = score
+                best = (wx, wy)
+
+        if best is not None:
+            recent_goals.append(best)
+            return best
+
+        # Safe fallback when map is constrained
         while True:
             gx = np.random.randint(10, grid.width - 10)
             gy = np.random.randint(10, grid.height - 10)
             if not grid.is_blocked(gx, gy):
                 wx, wy = grid.grid_to_world(gx, gy)
-                curr_x, curr_y = get_local_pos()
-                dist = math.sqrt((wx - curr_x) ** 2 + (wy - curr_y) ** 2)
-                if dist > 30:
+                if math.sqrt((wx - curr_x) ** 2 + (wy - curr_y) ** 2) > 25.0:
+                    recent_goals.append((wx, wy))
                     return wx, wy
 
     goal_x, goal_y = pick_new_goal()
+    progress_anchor = get_local_pos()
     print(f"First Goal: {goal_x:.1f}, {goal_y:.1f}")
 
     try:
@@ -476,6 +626,16 @@ async def collect_data(args):
 
             px, py = get_local_pos()
 
+            # If not making meaningful progress, force a replan/new mission goal.
+            if now - last_progress_check > 8.0:
+                moved = math.sqrt((px - progress_anchor[0]) ** 2 + (py - progress_anchor[1]) ** 2)
+                if moved < 4.0:
+                    print("Low progress detected -> replanning with a new goal")
+                    goal_x, goal_y = pick_new_goal()
+                    current_path = []
+                progress_anchor = (px, py)
+                last_progress_check = now
+
             if not current_path or path_index >= len(current_path):
                 print(f"Planning A* to {goal_x:.0f},{goal_y:.0f}...")
                 path = astar(grid, (px, py), (goal_x, goal_y))
@@ -484,11 +644,17 @@ async def collect_data(args):
                     goal_x, goal_y = pick_new_goal()
                     continue
 
-                current_path = path[::2] + [path[-1]]
+                # Downsample less aggressively for smoother guidance.
+                stride = 2 if args.precision_mode else 3
+                current_path = path[::stride] + [path[-1]]
                 path_index = 0
                 print(f"Path found! {len(current_path)} waypoints")
 
-            lookahead_dist = 4.0
+            speed_now = math.sqrt(dstate.vx * dstate.vx + dstate.vy * dstate.vy)
+            if args.precision_mode:
+                lookahead_dist = clamp(8.0 + (1.2 * speed_now), 8.0, 22.0)
+            else:
+                lookahead_dist = clamp(6.0 + (0.8 * speed_now), 6.0, 18.0)
             target_pt = current_path[path_index]
 
             for i in range(path_index, len(current_path)):
@@ -513,13 +679,114 @@ async def collect_data(args):
             dy = ty - py
             dist = math.sqrt(dx * dx + dy * dy)
 
-            # Desired speed tapers down near the target to reduce oscillation.
-            desired_speed = min(float(args.max_speed), max(float(args.base_speed), 0.35 * dist))
-            vx_des = (dx / dist) * desired_speed if dist > 1e-6 else 0.0
-            vy_des = (dy / dist) * desired_speed if dist > 1e-6 else 0.0
+            # Path tangent and signed cross-track error (map frame).
+            if path_index > 0:
+                prev_pt = current_path[path_index - 1]
+            else:
+                prev_pt = (px, py)
+            seg_dx = tx - prev_pt[0]
+            seg_dy = ty - prev_pt[1]
+            seg_len = math.sqrt(seg_dx * seg_dx + seg_dy * seg_dy)
+            if seg_len < 1e-6 and dist > 1e-6:
+                seg_dx, seg_dy, seg_len = dx, dy, dist
+            if seg_len > 1e-6:
+                seg_ux = seg_dx / seg_len
+                seg_uy = seg_dy / seg_len
+                rx = px - prev_pt[0]
+                ry = py - prev_pt[1]
+                cross_track_m = (rx * seg_uy) - (ry * seg_ux)
+            else:
+                cross_track_m = 0.0
+
+            map_yaw_deg = heading_to_map_yaw(dstate.yaw)
+            sim_lidar = world_map.simulate_lidar(px, py, dstate.rel_alt, map_yaw_deg)
+            min_dist = float(np.min(sim_lidar))
+
+            num_rays = len(sim_lidar)
+            front_center = num_rays // 2
+            front_half_window = max(2, int(round(num_rays * max(5.0, float(args.obstacle_sector_deg / 2.0)) / 360.0)))
+            front_slice = sim_lidar[
+                max(0, front_center - front_half_window) : min(num_rays, front_center + front_half_window + 1)
+            ]
+            front_min_dist = float(np.min(front_slice)) if len(front_slice) else min_dist
+
+            avoid_x, avoid_y, geom_clearance_m, geom_threat = world_map.obstacle_avoidance_field(
+                px,
+                py,
+                dstate.rel_alt,
+                map_yaw_deg,
+                lookahead_m=float(args.obstacle_lookahead_m),
+                corridor_deg=float(args.obstacle_corridor_deg),
+                safety_margin_m=float(args.obstacle_safety_margin_m),
+                vertical_clearance_m=float(args.obstacle_height_clearance_m),
+            )
+
+            route_ux = (dx / dist) if dist > 1e-6 else 0.0
+            route_uy = (dy / dist) if dist > 1e-6 else 0.0
+            avoid_norm = math.hypot(avoid_x, avoid_y)
+            if avoid_norm > 1e-6:
+                avoid_ux = avoid_x / avoid_norm
+                avoid_uy = avoid_y / avoid_norm
+            else:
+                avoid_ux = 0.0
+                avoid_uy = 0.0
+
+            avoid_blend = clamp(float(args.avoidance_gain) * geom_threat, 0.0, float(args.max_avoidance_blend))
+            nav_ux = ((1.0 - avoid_blend) * route_ux) + (avoid_blend * avoid_ux)
+            nav_uy = ((1.0 - avoid_blend) * route_uy) + (avoid_blend * avoid_uy)
+            nav_norm = math.hypot(nav_ux, nav_uy)
+            if nav_norm > 1e-6:
+                nav_ux /= nav_norm
+                nav_uy /= nav_norm
+            else:
+                nav_ux, nav_uy = route_ux, route_uy
+
+            # Desired speed: fast cruise with heading-aware taper and true frontal obstacle braking.
+            desired_speed = min(float(args.max_speed), max(float(args.base_speed), 0.70 * dist))
+            if front_min_dist >= slow_down_dist:
+                obstacle_factor = 1.0
+            else:
+                obstacle_factor = clamp(
+                    (front_min_dist - hard_stop_dist) / max(1e-6, (slow_down_dist - hard_stop_dist)),
+                    0.0,
+                    1.0,
+                )
+            yaw_target_nom = math.degrees(math.atan2(nav_uy, nav_ux)) if (abs(nav_ux) + abs(nav_uy)) > 1e-6 else math.degrees(math.atan2(dy, dx))
+            if args.precision_mode:
+                yaw_crosstrack_correction = clamp(
+                    -args.crosstrack_kp * cross_track_m,
+                    -abs(args.crosstrack_heading_cap_deg),
+                    abs(args.crosstrack_heading_cap_deg),
+                )
+            else:
+                yaw_crosstrack_correction = 0.0
+            yaw_target = wrap_deg(yaw_target_nom + yaw_crosstrack_correction)
+            yaw_err_abs = abs(shortest_diff(map_yaw_deg, yaw_target))
+            heading_factor = clamp(
+                1.0 - (yaw_err_abs / (70.0 if args.precision_mode else 95.0)),
+                0.35 if args.precision_mode else 0.25,
+                1.0,
+            )
+            if args.precision_mode:
+                desired_speed *= heading_factor
+                if obstacle_factor < 1.0:
+                    desired_speed *= obstacle_factor
+                if geom_clearance_m < (hard_stop_dist + 1.4):
+                    desired_speed *= clamp((geom_clearance_m - hard_stop_dist) / 1.4, 0.2, 1.0)
+                if front_min_dist > (hard_stop_dist + 0.7):
+                    desired_speed = max(desired_speed, min(float(args.base_speed) * 0.9, float(args.max_speed) * 0.55))
+            else:
+                speed_factor = min(obstacle_factor, heading_factor)
+                desired_speed *= speed_factor
+
+            if front_min_dist < hard_stop_dist:
+                desired_speed = 0.0
+
+            vx_des = nav_ux * desired_speed
+            vy_des = nav_uy * desired_speed
 
             # Acceleration-limit + light low-pass to avoid twitch.
-            dv = max_accel * max(dt, 1e-3)
+            dv = max_accel_world * max(dt, 1e-3)
             vx_cmd = max(prev_vx_cmd - dv, min(prev_vx_cmd + dv, vx_des))
             vy_cmd = max(prev_vy_cmd - dv, min(prev_vy_cmd + dv, vy_des))
             alpha = 0.25
@@ -527,16 +794,77 @@ async def collect_data(args):
             vy_cmd = (1 - alpha) * prev_vy_cmd + alpha * vy_cmd
             prev_vx_cmd, prev_vy_cmd = vx_cmd, vy_cmd
 
-            target_yaw = math.degrees(math.atan2(dy, dx))
-            diff = shortest_diff(dstate.yaw, target_yaw)
+            target_yaw = yaw_target
+            diff = shortest_diff(map_yaw_deg, target_yaw)
 
             # Limit yaw change per cycle to prevent violent spins.
             max_yaw_step = float(args.yaw_rate_limit) * max(dt, 1e-3)
             diff = max(-max_yaw_step, min(max_yaw_step, diff))
-            cmd_yaw = wrap_deg(dstate.yaw + diff)
+            cmd_map_yaw = wrap_deg(map_yaw_deg + diff)
+            cmd_yaw = map_yaw_to_heading(cmd_map_yaw)
 
-            sim_lidar = world_map.simulate_lidar(px, py, dstate.rel_alt, dstate.yaw)
-            min_dist = float(np.min(sim_lidar))
+            # Body-frame guidance: avoid backward flight, cap side-slip, then transform to NED.
+            yaw_err_deg = shortest_diff(map_yaw_deg, target_yaw)
+            yaw_err_rad = math.radians(yaw_err_deg)
+            fwd_des = max(0.0, desired_speed * math.cos(yaw_err_rad))
+            lat_gain = 0.08 if args.precision_mode else 0.35
+            lat_des = lat_gain * desired_speed * math.sin(yaw_err_rad)
+            if args.precision_mode and abs(yaw_err_deg) > float(args.forward_hold_deg):
+                fwd_des *= 0.70
+                lat_des *= 0.15
+            if front_min_dist < (hard_stop_dist + 0.8):
+                lat_des *= 0.2
+            lat_limit_scale = args.max_lateral_ratio if args.precision_mode else 0.15
+            lat_limit = lat_limit_scale * max(1.0, float(args.max_speed))
+            lat_des = clamp(lat_des, -lat_limit, lat_limit)
+
+            db = max_accel_body * max(dt, 1e-3)
+            lat_acc_cmd = (lat_des - prev_lat_cmd) / max(dt, 1e-3)
+            lat_acc_cmd = clamp(lat_acc_cmd, -float(args.max_lateral_accel_mps2), float(args.max_lateral_accel_mps2))
+            tilt_target_deg = math.degrees(math.atan2(abs(lat_acc_cmd), 9.81))
+            if tilt_target_deg > float(args.max_tilt_deg):
+                tilt_scale = float(args.max_tilt_deg) / max(1e-6, tilt_target_deg)
+                lat_des *= tilt_scale
+                lat_acc_cmd *= tilt_scale
+                tilt_target_deg = float(args.max_tilt_deg)
+
+            fwd_cmd = clamp(fwd_des, prev_fwd_cmd - db, prev_fwd_cmd + db)
+            lat_cmd = clamp(lat_des, prev_lat_cmd - db, prev_lat_cmd + db)
+            prev_fwd_cmd, prev_lat_cmd = fwd_cmd, lat_cmd
+
+            yaw_rad = math.radians(map_yaw_deg)
+            c = math.cos(yaw_rad)
+            s = math.sin(yaw_rad)
+            vx_cmd_map = c * fwd_cmd - s * lat_cmd
+            vy_cmd_map = s * fwd_cmd + c * lat_cmd
+
+            vx_cmd, vy_cmd = map_xy_to_ned(vx_cmd_map, vy_cmd_map)
+
+            prev_vx_cmd, prev_vy_cmd = vx_cmd, vy_cmd
+
+            # Runtime flight-quality metrics.
+            map_vx, map_vy = ned_to_map_xy(dstate.vx, dstate.vy)
+            yaw_rad_metric = math.radians(map_yaw_deg)
+            c_metric = math.cos(yaw_rad_metric)
+            s_metric = math.sin(yaw_rad_metric)
+            v_forward = (map_vx * c_metric) + (map_vy * s_metric)
+            v_lateral = (-map_vx * s_metric) + (map_vy * c_metric)
+            sideslip_deg = math.degrees(math.atan2(v_lateral, max(0.3, abs(v_forward))))
+            heading_error_deg = shortest_diff(map_yaw_deg, yaw_target)
+            progress_mps = (dx / max(1e-6, dist)) * map_vx + (dy / max(1e-6, dist)) * map_vy
+
+            if args.precision_mode and (time.time() - metrics_log_at) >= max(0.5, float(args.metrics_log_sec)):
+                log(
+                    "FALCON metrics | "
+                    f"xtrack={cross_track_m:.2f}m "
+                    f"head_err={heading_error_deg:.1f}deg "
+                    f"sideslip={sideslip_deg:.1f}deg "
+                    f"front_clear={front_min_dist:.2f}m "
+                    f"geom_clear={geom_clearance_m:.2f}m "
+                    f"tilt={tilt_target_deg:.1f}deg "
+                    f"progress={progress_mps:.2f}mps"
+                )
+                metrics_log_at = time.time()
 
             await drone.offboard.set_velocity_ned(
                 VelocityNedYaw(vx_cmd, vy_cmd, 0.0, cmd_yaw)
@@ -554,8 +882,16 @@ async def collect_data(args):
                 vx_cmd,
                 vy_cmd,
                 0.0,
-                0.0,
+                cmd_yaw,
                 min_dist,
+                front_min_dist,
+                cross_track_m,
+                heading_error_deg,
+                sideslip_deg,
+                progress_mps,
+                geom_clearance_m,
+                geom_threat,
+                tilt_target_deg,
                 json.dumps(sim_lidar.tolist()),
                 goal_x,
                 goal_y,
@@ -620,16 +956,16 @@ async def collect_data(args):
                                 lat0, lon0 = dstate.lat, dstate.lon
                                 px0, py0 = get_local_pos()
                                 
-                                # Delta
+                                # Delta in NED-like meters
                                 dLat = target_lat - lat0
                                 dLon = target_lon - lon0
-                                
-                                # Meters
-                                dy = dLat * 111319.0
-                                dx = dLon * 111319.0 * math.cos(math.radians(lat0))
-                                
-                                new_x = px0 + dx
-                                new_y = py0 + dy
+                                d_north = dLat * 111319.0
+                                d_east = dLon * 111319.0 * math.cos(math.radians(lat0))
+
+                                cur_map_x, cur_map_y = get_local_pos()
+                                d_map_x, d_map_y = ned_to_map_xy(d_north, d_east)
+                                new_x = cur_map_x + d_map_x
+                                new_y = cur_map_y + d_map_y
                                 
                                 log(f"--> Override Goal: {new_x:.1f}, {new_y:.1f}")
                                 goal_x, goal_y = new_x, new_y
@@ -804,9 +1140,26 @@ if __name__ == "__main__":
     parser.add_argument("--duration", type=float, default=300.0)
     parser.add_argument("--alt", type=float, default=15.0)
     parser.add_argument("--hz", type=float, default=20.0)
-    parser.add_argument("--base_speed", type=float, default=3.0)
-    parser.add_argument("--max_speed", type=float, default=8.0)
-    parser.add_argument("--yaw_rate_limit", type=float, default=40.0)
+    parser.add_argument("--base_speed", type=float, default=6.0)
+    parser.add_argument("--max_speed", type=float, default=12.0)
+    parser.add_argument("--yaw_rate_limit", type=float, default=65.0)
+    parser.add_argument("--precision_mode", action="store_true", help="Enable strict path-tracking Falcon mode.")
+    parser.add_argument("--no_precision_mode", action="store_false", dest="precision_mode", help="Disable Falcon precision controller.")
+    parser.set_defaults(precision_mode=True)
+    parser.add_argument("--obstacle_sector_deg", type=float, default=14.0, help="Front obstacle sector width in degrees.")
+    parser.add_argument("--crosstrack_kp", type=float, default=3.0, help="Cross-track to heading correction gain (deg per meter).")
+    parser.add_argument("--crosstrack_heading_cap_deg", type=float, default=14.0, help="Max cross-track heading correction in degrees.")
+    parser.add_argument("--max_lateral_ratio", type=float, default=0.04, help="Max lateral speed as ratio of max_speed in precision mode.")
+    parser.add_argument("--forward_hold_deg", type=float, default=45.0, help="Hold forward speed down when heading error exceeds this.")
+    parser.add_argument("--obstacle_lookahead_m", type=float, default=12.0, help="Geometry obstacle lookahead distance in meters.")
+    parser.add_argument("--obstacle_corridor_deg", type=float, default=65.0, help="Forward corridor half-angle for geometry avoidance.")
+    parser.add_argument("--obstacle_safety_margin_m", type=float, default=1.4, help="Extra obstacle volume margin in meters.")
+    parser.add_argument("--obstacle_height_clearance_m", type=float, default=1.2, help="Ignore obstacles lower than altitude minus this clearance.")
+    parser.add_argument("--avoidance_gain", type=float, default=0.95, help="Gain for geometry threat to route/avoidance blending.")
+    parser.add_argument("--max_avoidance_blend", type=float, default=0.70, help="Upper bound on avoidance blending factor.")
+    parser.add_argument("--max_lateral_accel_mps2", type=float, default=2.4, help="Max lateral acceleration command magnitude.")
+    parser.add_argument("--max_tilt_deg", type=float, default=14.0, help="Maximum target lateral tilt angle for smooth maneuvering.")
+    parser.add_argument("--metrics_log_sec", type=float, default=1.5, help="Seconds between Falcon quality metric logs.")
     parser.add_argument("--sdf_path", type=str, default=os.environ.get("SDF_PATH", "obstacles.sdf"))
     parser.add_argument("--offline", action="store_true", help="Run without PX4/Gazebo (pure Python)")
     parser.add_argument(

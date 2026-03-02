@@ -32,6 +32,29 @@ function Header({ onMenuClick, connected }) {
 
         {/* Right side */}
         <div className="flex items-center space-x-6">
+          {/* E-STOP BUTTON (Human in the loop override) */}
+          <button
+            onClick={async () => {
+              if (window.confirm("CRITICAL WARNING: Initiate Global Emergency Stop? All drones will RTL/Land immediately.")) {
+                try {
+                  const { default: api } = await import('../api');
+                  await api.post('/api/emergency');
+                  alert("E-STOP INITIATED.");
+                } catch (e) {
+                  alert("E-Stop Failed: " + e.message);
+                }
+              }
+            }}
+            className={`flex items-center space-x-2 px-4 py-1.5 rounded-full border border-lesnar-danger/50 bg-lesnar-danger/20 hover:bg-lesnar-danger/40 transition-all cursor-pointer shadow-[0_0_15px_rgba(255,0,85,0.4)] hover:shadow-[0_0_25px_rgba(255,0,85,0.8)]`}
+          >
+            <div className="h-2 w-2 rounded-full bg-lesnar-danger animate-pulse" />
+            <span className="text-xs font-black text-white uppercase tracking-widest">
+              Emergency Kill
+            </span>
+          </button>
+
+          <div className="h-6 w-[1px] bg-white/10 hidden md:block" />
+
           {/* Connection status */}
           <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-full border ${connected ? 'border-lesnar-success/20 bg-lesnar-success/5' : 'border-lesnar-danger/20 bg-lesnar-danger/5'
             }`}>

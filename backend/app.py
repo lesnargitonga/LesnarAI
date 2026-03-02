@@ -810,12 +810,14 @@ def emergency_land_all():
     """Emergency land all drones"""
     try:
         fleet.emergency_land_all()
+        # Ensure Gazebo/PX4 Bridge actually receives the emergency command via Redis publish
+        _publish_command('SENTINEL-01', 'land')
         return jsonify({
             'success': True,
             'message': 'Emergency landing initiated for all drones',
             'timestamp': datetime.now().isoformat()
         })
-    
+
     except Exception as e:
         logger.error(f"Error during emergency landing: {e}")
         return _safe_error('Emergency landing failed', e)
