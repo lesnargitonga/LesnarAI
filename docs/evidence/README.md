@@ -6,6 +6,7 @@ This folder is used to assemble proof artifacts for hackathon presentations.
 
 - `../Presentation_Evidence_Pack.pdf`
 - `../Presentation_Proof_Checklist.pdf`
+- `../Issues_Encountered_March_2026.pdf`
 - `../visual_evidence.png`
 - `videos/*.mp4` (or `.mov`, `.mkv`, `.webm`)
 
@@ -21,6 +22,7 @@ This creates:
 
 - `docs/Presentation_Evidence_Pack.pdf`
 - `docs/Presentation_Proof_Checklist.pdf`
+- `docs/Issues_Encountered_March_2026.pdf`
 
 ## Suggested Video File Names
 

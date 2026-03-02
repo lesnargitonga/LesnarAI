@@ -154,9 +154,69 @@ def build_checklist_pdf(repo_root: Path, out_pdf: Path):
     c.save()
 
 
+def build_issues_pdf(repo_root: Path, out_pdf: Path):
+    c = canvas.Canvas(str(out_pdf), pagesize=A4)
+    width, height = A4
+
+    commit = sh(repo_root, ["git", "rev-parse", "HEAD"])[:10]
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(50, height - 60, "Issues Encountered & Resolutions (March 2026)")
+    c.setFont("Helvetica", 10)
+    c.drawString(50, height - 82, f"Generated: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    c.drawString(50, height - 98, f"Commit context: {commit}")
+
+    issues = [
+        (
+            "WSL path and shell mismatch",
+            "Some start tasks used Windows PowerShell commands in Linux/WSL context, causing startup failures.",
+            "Standardized startup on native WSL paths (`~/workspace/LesnarAI`) and bash-based launch sequence.",
+        ),
+        (
+            "PX4 path mismatch",
+            "PX4 expected at workspace path but actual source was under `~/PX4-Autopilot`.",
+            "Updated launch flow to start SITL from `~/PX4-Autopilot` and validate process health.",
+        ),
+        (
+            "MAVSDK UDP bind conflict on 14540",
+            "Teacher connection intermittently failed with `bind error: Address in use`.",
+            "Performed hard-stop cleanup of stale processes and restarted stack in strict dependency order.",
+        ),
+        (
+            "Frontend build blocker in dashboard",
+            "Dashboard UI had JSX syntax imbalance and an undefined callback, stopping compile.",
+            "Fixed JSX closure and removed undefined listener usage so frontend compiles and serves on port 3000.",
+        ),
+        (
+            "Drone sideways/erratic behavior",
+            "Controller exhibited unstable progress and non-forward dominant motion around obstacles.",
+            "Implemented frame-safe conversions, front-sector obstacle logic, geometry-aware avoidance, and tilt-limited lateral control in teacher bridge.",
+        ),
+        (
+            "Post-push CI failures",
+            "GitHub Actions reported lint/build failures despite successful push.",
+            "Push confirmed successful; CI issues isolated for follow-up lint/build remediation commit.",
+        ),
+    ]
+
+    y = height - 130
+    c.setFont("Helvetica", 10)
+    for index, (title, problem, resolution) in enumerate(issues, start=1):
+        c.setFont("Helvetica-Bold", 11)
+        y = draw_wrapped_text(c, f"{index}. {title}", 50, y, width - 90, 15)
+        c.setFont("Helvetica", 10)
+        y = draw_wrapped_text(c, f"Issue: {problem}", 62, y, width - 105, 14)
+        y = draw_wrapped_text(c, f"Resolution: {resolution}", 62, y, width - 105, 14)
+        y -= 8
+        if y < 90:
+            c.showPage()
+            y = height - 60
+
+    c.save()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate presentation-ready evidence PDFs")
-    parser.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[1]))
+    parser.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[2]))
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
@@ -168,13 +228,16 @@ def main():
 
     pack_pdf = docs_dir / "Presentation_Evidence_Pack.pdf"
     checklist_pdf = docs_dir / "Presentation_Proof_Checklist.pdf"
+    issues_pdf = docs_dir / "Issues_Encountered_March_2026.pdf"
     screenshot = docs_dir / "visual_evidence.png"
 
     build_pack_pdf(repo_root, pack_pdf, screenshot, videos_dir)
     build_checklist_pdf(repo_root, checklist_pdf)
+    build_issues_pdf(repo_root, issues_pdf)
 
     print(f"Created: {pack_pdf}")
     print(f"Created: {checklist_pdf}")
+    print(f"Created: {issues_pdf}")
 
 
 if __name__ == "__main__":

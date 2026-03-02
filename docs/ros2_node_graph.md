@@ -1,146 +1,146 @@
-# ROS 2 / MAVSDK Runtime Node Graph
+# ROS 2 / MAVROS Runtime Node Graph (High-Fidelity)
 
-## Overview
+## Verification Scope
 
-Operation Sentinel uses **MAVSDK** (not MAVROS) for direct MAVLink communication with PX4.
-This provides lower-latency, lighter-weight integration compared to the full ROS 2 / MAVROS stack.
+This diagram verifies the **High-Fidelity Architecture Diagram milestone** for a ROS 2 + MAVROS runtime path, explicitly showing:
 
-The architecture below shows all runtime nodes, interfaces, and data flow.
+- Runtime nodes and process boundaries
+- Topics, services, and message interfaces
+- Command and telemetry data flow across AI → MAVROS → PX4 → Gazebo
+
+> Note: Current project implementation is MAVSDK-first. The graph below is the ROS 2 / MAVROS reference architecture requested for milestone verification.
 
 ---
 
 ## Runtime Node Graph
 
 ```mermaid
-graph TB
-    subgraph WSL2["WSL2 (Ubuntu)"]
-        subgraph GZ["Gazebo Harmonic (Physics Engine)"]
-            GZ_WORLD["gz::sim::World<br/>obstacles.sdf<br/>(85 obstacles)"]
-            GZ_PHYS["gz::physics<br/>DART Engine"]
-            GZ_SENSORS["gz::sensors<br/>IMU, Barometer, GPS"]
-            GZ_TRANSPORT["gz::transport<br/>(Protobuf pub/sub)"]
+flowchart LR
+    subgraph SIM[Simulation Environment]
+        GZ[Gazebo Harmonic\nWorld: obstacles.sdf]
+        GZS[gz::sensors\nIMU / GPS / Baro / Camera]
+        GZT[gz::transport]
+        GZ --- GZS
+        GZ --- GZT
+    end
+
+    subgraph FCU[PX4 SITL Flight Stack]
+        PX4CMD[commander]
+        PX4NAV[navigator]
+        PX4EKF[EKF2]
+        PX4POS[mc_pos_control]
+        PX4ATT[mc_att_control]
+        PX4MAV[mavlink module\nUDP 14540]
+    end
+
+    subgraph ROS2[ROS 2 Graph]
+        subgraph AI[AI Layer]
+            PERCEP[perception_node]
+            PLAN[planner_node\n(A* / policy)]
+            MISSION[mission_manager_node]
+            SAFETY[safety_guard_node]
         end
 
-        subgraph PX4["PX4 SITL Autopilot"]
-            EKF2["EKF2<br/>State Estimation<br/>250 Hz"]
-            MC_ATT["mc_att_control<br/>Attitude Controller<br/>250 Hz"]
-            MC_POS["mc_pos_control<br/>Position Controller<br/>50 Hz"]
-            COMMANDER["commander<br/>Flight Mode Manager"]
-            MAVLINK["mavlink<br/>MAVLink Bridge<br/>UDP :14540"]
-        end
-
-        subgraph BRIDGE["Bridge Process (Python)"]
-            MAVSDK_CLIENT["MAVSDK Client<br/>Async gRPC"]
-            MAVSDK_SERVER["mavsdk_server<br/>MAVLink ↔ gRPC<br/>UDP :14540"]
-            LIDAR_SIM["Simulated LiDAR<br/>72 rays, 360°, 20 m"]
-            ASTAR["A* Pathfinder<br/>Grid-based"]
-            SDF_PARSER["SDF Parser<br/>Obstacle Extraction"]
-            REDIS_PUB["Redis Publisher<br/>Telemetry + Status"]
-            REDIS_SUB["Redis Subscriber<br/>Commands"]
+        subgraph MAVROS[MAVROS Layer]
+            MAVROSN[mavros_node]
+            PLUGIN_STATE[state plugin]
+            PLUGIN_LP[local_position plugin]
+            PLUGIN_IMU[imu plugin]
+            PLUGIN_SETPT[setpoint_raw plugin]
+            PLUGIN_CMD[cmd plugin]
         end
     end
 
-    subgraph DOCKER["Docker Desktop (Windows Host)"]
-        subgraph BACKEND["Flask Backend Container"]
-            FLASK_API["Flask REST API<br/>:5000"]
-            SOCKETIO["Socket.IO<br/>WebSocket Server<br/>5 Hz"]
-            REDIS_BRIDGE["Redis Bridge<br/>Pub/Sub Listener"]
-            ORM["SQLAlchemy ORM<br/>Models + Migrations"]
-        end
-
-        REDIS["Redis<br/>:6379<br/>Pub/Sub + Cache"]
-        TSDB["TimescaleDB<br/>:5432<br/>Time-Series Storage"]
-        ADMINER["Adminer<br/>:8080<br/>DB Viewer"]
+    subgraph APP[App & Ops Layer]
+        API[backend_api\nREST/SocketIO]
+        REDIS[(Redis Pub/Sub)]
+        UI[frontend_dashboard]
     end
 
-    subgraph FRONTEND["React Frontend"]
-        DASHBOARD["Dashboard<br/>Fleet Overview"]
-        MAP["DroneMap<br/>Leaflet + Markers"]
-        ANALYTICS["Analytics<br/>Live Fleet Metrics"]
-        WS_CLIENT["Socket.IO Client<br/>WebSocket"]
-    end
+    %% Simulation <-> PX4
+    GZT <-->|sensor + actuator transport| PX4EKF
+    PX4ATT --> PX4POS
+    PX4POS --> PX4NAV
+    PX4NAV --> PX4CMD
+    PX4CMD --> PX4MAV
 
-    %% Gazebo ↔ PX4
-    GZ_WORLD -->|"gz::transport<br/>pose, velocity"| GZ_TRANSPORT
-    GZ_PHYS -->|"Physics step"| GZ_WORLD
-    GZ_SENSORS -->|"IMU, Baro, GPS"| GZ_TRANSPORT
-    GZ_TRANSPORT <-->|"gz_bridge<br/>Protobuf"| PX4
+    %% MAVLink bridge
+    PX4MAV <-->|MAVLink UDP| MAVROSN
 
-    %% PX4 internal
-    EKF2 -->|"vehicle_local_position"| MC_POS
-    MC_POS -->|"vehicle_attitude_setpoint"| MC_ATT
-    MC_ATT -->|"actuator_outputs"| GZ_TRANSPORT
-    COMMANDER -->|"vehicle_command"| MC_POS
+    %% MAVROS plugin internals
+    MAVROSN --> PLUGIN_STATE
+    MAVROSN --> PLUGIN_LP
+    MAVROSN --> PLUGIN_IMU
+    MAVROSN --> PLUGIN_SETPT
+    MAVROSN --> PLUGIN_CMD
 
-    %% PX4 ↔ Bridge
-    MAVLINK <-->|"MAVLink UDP<br/>:14540"| MAVSDK_SERVER
-    MAVSDK_SERVER <-->|"gRPC"| MAVSDK_CLIENT
+    %% ROS2 topic/service dataflow
+    PLUGIN_STATE -->|/mavros/state\n[mavros_msgs/State]| MISSION
+    PLUGIN_LP -->|/mavros/local_position/pose\n[geometry_msgs/PoseStamped]| PLAN
+    PLUGIN_IMU -->|/mavros/imu/data\n[sensor_msgs/Imu]| PERCEP
 
-    %% Bridge internal
-    SDF_PARSER -->|"Obstacle map"| LIDAR_SIM
-    SDF_PARSER -->|"Obstacle map"| ASTAR
-    MAVSDK_CLIENT -->|"Position, velocity,<br/>battery, mode"| REDIS_PUB
-    LIDAR_SIM -->|"Distance readings"| ASTAR
-    ASTAR -->|"Waypoint commands"| MAVSDK_CLIENT
-    REDIS_SUB -->|"goto, takeoff, land"| MAVSDK_CLIENT
+    PERCEP -->|/ai/obstacles\n[sensor_msgs/LaserScan or custom]| PLAN
+    PLAN -->|/ai/trajectory\n[nav_msgs/Path]| MISSION
+    SAFETY -->|/ai/safety_override\n[std_msgs/Bool]| MISSION
 
-    %% Bridge ↔ Redis
-    REDIS_PUB -->|"PUBLISH telemetry"| REDIS
-    REDIS -->|"SUBSCRIBE commands"| REDIS_SUB
+    MISSION -->|/mavros/setpoint_raw/local\n[mavros_msgs/PositionTarget]| PLUGIN_SETPT
+    MISSION -->|/mavros/set_mode\n[mavros_msgs/srv/SetMode]| PLUGIN_CMD
+    MISSION -->|/mavros/cmd/arming\n[mavros_msgs/srv/CommandBool]| PLUGIN_CMD
+    MISSION -->|/mavros/cmd/takeoff\n[mavros_msgs/srv/CommandTOL]| PLUGIN_CMD
+    MISSION -->|/mavros/cmd/land\n[mavros_msgs/srv/CommandTOL]| PLUGIN_CMD
 
-    %% Backend ↔ Redis/DB
-    REDIS -->|"Pub/Sub"| REDIS_BRIDGE
-    REDIS_BRIDGE -->|"Telemetry data"| SOCKETIO
-    REDIS_BRIDGE -->|"State updates"| ORM
-    ORM <-->|"SQL"| TSDB
-    FLASK_API <-->|"Queries"| ORM
-    FLASK_API -->|"PUBLISH commands"| REDIS
-    ADMINER <-->|"SQL"| TSDB
+    %% App layer integration
+    API <-->|command + telemetry| REDIS
+    API <-->|websocket + REST| UI
+    MISSION <-->|mission command bridge| REDIS
 
-    %% Frontend ↔ Backend
-    WS_CLIENT <-->|"WebSocket<br/>5 Hz telemetry"| SOCKETIO
-    DASHBOARD --- WS_CLIENT
-    MAP --- WS_CLIENT
-    ANALYTICS --- WS_CLIENT
-    FRONTEND -->|"REST API<br/>HTTP :5000"| FLASK_API
+    classDef sim fill:#2E7D32,color:#fff,stroke:#1B5E20
+    classDef px4 fill:#1565C0,color:#fff,stroke:#0D47A1
+    classDef ai fill:#EF6C00,color:#fff,stroke:#E65100
+    classDef mav fill:#6A1B9A,color:#fff,stroke:#4A148C
+    classDef app fill:#00838F,color:#fff,stroke:#006064
 
-    classDef gazebo fill:#4CAF50,color:white,stroke:#2E7D32
-    classDef px4 fill:#2196F3,color:white,stroke:#1565C0
-    classDef bridge fill:#FF9800,color:white,stroke:#E65100
-    classDef docker fill:#9C27B0,color:white,stroke:#6A1B9A
-    classDef frontend fill:#00BCD4,color:white,stroke:#00838F
-    classDef data fill:#607D8B,color:white,stroke:#37474F
-
-    class GZ_WORLD,GZ_PHYS,GZ_SENSORS,GZ_TRANSPORT gazebo
-    class EKF2,MC_ATT,MC_POS,COMMANDER,MAVLINK px4
-    class MAVSDK_CLIENT,MAVSDK_SERVER,LIDAR_SIM,ASTAR,SDF_PARSER,REDIS_PUB,REDIS_SUB bridge
-    class FLASK_API,SOCKETIO,REDIS_BRIDGE,ORM docker
-    class DASHBOARD,MAP,ANALYTICS,WS_CLIENT frontend
-    class REDIS,TSDB,ADMINER data
+    class GZ,GZS,GZT sim
+    class PX4CMD,PX4NAV,PX4EKF,PX4POS,PX4ATT,PX4MAV px4
+    class PERCEP,PLAN,MISSION,SAFETY ai
+    class MAVROSN,PLUGIN_STATE,PLUGIN_LP,PLUGIN_IMU,PLUGIN_SETPT,PLUGIN_CMD mav
+    class API,REDIS,UI app
 ```
 
 ---
 
-## Interface Summary
+## Interface Matrix (ROS 2 / MAVROS)
 
-| Interface | Protocol | Rate | Direction |
-|-----------|----------|------|-----------|
-| Gazebo ↔ PX4 | gz::transport (Protobuf) | 250 Hz | Bidirectional |
-| PX4 ↔ MAVSDK Server | MAVLink over UDP :14540 | 50 Hz | Bidirectional |
-| MAVSDK Server ↔ Client | gRPC (local) | 50 Hz | Bidirectional |
-| Bridge → Redis | PUBLISH (telemetry channel) | 20 Hz | Unidirectional |
-| Redis → Bridge | SUBSCRIBE (commands channel) | Event-driven | Unidirectional |
-| Redis → Backend | Pub/Sub listener | 20 Hz | Unidirectional |
-| Backend → Frontend | WebSocket (Socket.IO) | 5 Hz | Unidirectional |
-| Frontend → Backend | REST API (HTTP) | On-demand | Unidirectional |
-| Backend ↔ TimescaleDB | SQL (SQLAlchemy) | ~1.7 Hz | Bidirectional |
+| Source | Interface | Type | Sink | Purpose |
+|---|---|---|---|---|
+| `mavros state plugin` | `/mavros/state` | Topic (`mavros_msgs/State`) | `mission_manager_node` | Mode + arming state feedback |
+| `mavros local_position plugin` | `/mavros/local_position/pose` | Topic (`geometry_msgs/PoseStamped`) | `planner_node` | Position feedback for path tracking |
+| `mavros imu plugin` | `/mavros/imu/data` | Topic (`sensor_msgs/Imu`) | `perception_node` | Attitude/IMU features |
+| `perception_node` | `/ai/obstacles` | Topic (`sensor_msgs/LaserScan` or custom) | `planner_node` | Obstacle representation |
+| `planner_node` | `/ai/trajectory` | Topic (`nav_msgs/Path`) | `mission_manager_node` | Planned route |
+| `safety_guard_node` | `/ai/safety_override` | Topic (`std_msgs/Bool`) | `mission_manager_node` | Safety gating |
+| `mission_manager_node` | `/mavros/setpoint_raw/local` | Topic (`mavros_msgs/PositionTarget`) | `mavros setpoint_raw plugin` | Offboard setpoints |
+| `mission_manager_node` | `/mavros/set_mode` | Service (`mavros_msgs/srv/SetMode`) | `mavros cmd plugin` | Mode changes (e.g., OFFBOARD) |
+| `mission_manager_node` | `/mavros/cmd/arming` | Service (`mavros_msgs/srv/CommandBool`) | `mavros cmd plugin` | Arm/disarm |
+| `mission_manager_node` | `/mavros/cmd/takeoff` | Service (`mavros_msgs/srv/CommandTOL`) | `mavros cmd plugin` | Takeoff command |
+| `mission_manager_node` | `/mavros/cmd/land` | Service (`mavros_msgs/srv/CommandTOL`) | `mavros cmd plugin` | Land command |
 
-## Key Design Decisions
+---
 
-1. **MAVSDK over MAVROS**: Direct MAVLink via MAVSDK provides lower latency and simpler deployment than the full ROS 2 / MAVROS stack. No ROS 2 installation required.
+## Dataflow Narrative
 
-2. **Simulated LiDAR**: Parses `obstacles.sdf` for ground-truth obstacle positions, then ray-casts 72 beams. Produces clean training data without sensor noise.
+1. Gazebo publishes simulated sensor streams and receives actuator outputs through PX4 SITL integration.
+2. PX4 estimates state (`EKF2`) and exposes control/telemetry through MAVLink UDP.
+3. MAVROS translates MAVLink into ROS 2 topics/services for the AI mission stack.
+4. AI nodes compute obstacle-aware trajectories and publish setpoints through MAVROS plugins.
+5. Mission and telemetry are mirrored into backend/Redis/frontend for operator visibility.
 
-3. **Redis Pub/Sub**: Decouples the Bridge from the Backend. Enables non-blocking command/telemetry flow across the WSL ↔ Docker boundary.
+---
 
-4. **Hybrid Control**: PX4 handles low-level flight control (250 Hz). AI layer handles mission planning and obstacle avoidance (10-50 Hz). Each operates at its optimal frequency.
+## Milestone Verification Checklist
+
+- Runtime nodes identified by layer (AI, MAVROS, PX4, Simulation)
+- Control interfaces specified (setpoint + mode/arm/takeoff/land services)
+- Telemetry interfaces specified (state, local position, IMU)
+- End-to-end command and feedback paths documented
+- Dataflow between ops layer and autonomy layer included
