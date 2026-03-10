@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Shield, ChevronRight, X } from 'lucide-react';
+import { Terminal, Shield, ChevronRight, X, Download } from 'lucide-react';
+import { readOperatorAuditLog, subscribeOperatorAudit } from '../utils/operatorAudit';
 
-function DiagnosticTerminal({ logs = [], socket, onClose }) {
+function DiagnosticTerminal({ logs = [], socket, onClose, linkMetrics }) {
     const [terminalLogs, setTerminalLogs] = useState([]);
     const bottomRef = useRef(null);
 
@@ -65,6 +66,28 @@ function DiagnosticTerminal({ logs = [], socket, onClose }) {
         return () => clearInterval(interval);
     }, []);
 
+    useEffect(() => {
+        const existing = readOperatorAuditLog().slice(-12).map((entry) => ({
+            id: entry.id,
+            type: entry.type || 'audit',
+            message: entry.message,
+            level: entry.level || 'info',
+            time: new Date(entry.timestamp).toLocaleTimeString(),
+        }));
+        if (existing.length > 0) {
+            setTerminalLogs((prev) => [...prev, ...existing].slice(-100));
+        }
+        return subscribeOperatorAudit((entry) => {
+            handleLog(entry.type || 'audit', entry.message, entry.level || 'info');
+        });
+    }, []);
+
+    useEffect(() => {
+        if (linkMetrics?.degradedMode) {
+            handleLog('warning', `Link degraded: RTT ${linkMetrics?.latencyMs ?? '—'}ms, telemetry age ${Number.isFinite(linkMetrics?.telemetryAgeMs) ? Math.round(linkMetrics.telemetryAgeMs) : '—'}ms.`, 'warning');
+        }
+    }, [linkMetrics?.degradedMode, linkMetrics?.latencyMs, linkMetrics?.telemetryAgeMs]);
+
     // Sync with incoming logs from props
     useEffect(() => {
         if (logs.length > 0) {
@@ -80,6 +103,17 @@ function DiagnosticTerminal({ logs = [], socket, onClose }) {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [terminalLogs]);
 
+    const downloadConsoleLog = () => {
+        const text = terminalLogs.map((log) => `[${log.time}] ${String(log.level || 'info').toUpperCase()} ${log.message || log.text || ''}`).join('\n');
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `lesnar-diagnostic-console-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+        link.click();
+        URL.revokeObjectURL(url);
+    };
+
     return (
         <div className="glass-dark border border-white/10 rounded-2xl flex flex-col h-full overflow-hidden shadow-2xl relative">
             {/* Header */}
@@ -89,6 +123,9 @@ function DiagnosticTerminal({ logs = [], socket, onClose }) {
                     <span className="text-[10px] font-mono font-bold text-white uppercase tracking-widest">Diagnostic Console // T-X7</span>
                 </div>
                 <div className="flex items-center space-x-2">
+                    <button onClick={downloadConsoleLog} className="hover:bg-white/5 p-1 rounded transition-colors text-gray-500 hover:text-white" title="Download console log">
+                        <Download className="h-4 w-4" />
+                    </button>
                     <div className="h-1.5 w-1.5 bg-lesnar-success rounded-full" />
                     <span className="text-[8px] font-mono text-lesnar-success uppercase px-1">Live_Stream</span>
                     {onClose && (
@@ -136,8 +173,8 @@ function DiagnosticTerminal({ logs = [], socket, onClose }) {
                     </div>
                 </div>
                 <div className="flex items-center space-x-2">
-                    <Shield className="h-3 w-3 text-lesnar-success" />
-                    <span className="text-[8px] font-mono text-gray-500 uppercase">Secure Link // OK</span>
+                    <Shield className={`h-3 w-3 ${linkMetrics?.degradedMode ? 'text-lesnar-warning' : 'text-lesnar-success'}`} />
+                    <span className="text-[8px] font-mono text-gray-500 uppercase">{linkMetrics?.degradedMode ? 'Secure Link // Degraded' : 'Secure Link // OK'}</span>
                 </div>
             </div>
         </div>

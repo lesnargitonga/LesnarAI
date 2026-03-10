@@ -1,0 +1,350 @@
+{
+  "file": "dataset/px4_teacher/telemetry_god.csv",
+  "rows": 99592,
+  "duration_s": 5198.973,
+  "sample_rate_hz": 19.156,
+  "metrics": {
+    "speed_avg_mps": 2.82,
+    "speed_max_mps": 8.357,
+    "progress_avg_mps": 2.744,
+    "progress_min_mps": -3.617,
+    "front_clear_avg_m": 18.644,
+    "front_clear_min_m": 0.0,
+    "xtrack_avg_m": 1.512,
+    "xtrack_max_m": 11.221,
+    "heading_err_avg_deg": 22.873,
+    "heading_err_max_deg": 179.975,
+    "low_speed_pct": 10.75,
+    "low_progress_pct": 11.98,
+    "front_zero_pct": 1.32,
+    "cmd_zero_pct": 9.86
+  },
+  "events": {
+    "long_low_speed_segments": [
+      {
+        "t_start_s": 107.39,
+        "t_end_s": 124.34,
+        "duration_s": 16.95
+      },
+      {
+        "t_start_s": 332.58,
+        "t_end_s": 343.62,
+        "duration_s": 11.04
+      },
+      {
+        "t_start_s": 599.09,
+        "t_end_s": 748.57,
+        "duration_s": 149.48
+      },
+      {
+        "t_start_s": 905.85,
+        "t_end_s": 909.62,
+        "duration_s": 3.77
+      },
+      {
+        "t_start_s": 1006.97,
+        "t_end_s": 1009.17,
+        "duration_s": 2.2
+      },
+      {
+        "t_start_s": 1158.49,
+        "t_end_s": 1174.2,
+        "duration_s": 15.71
+      },
+      {
+        "t_start_s": 1182.25,
+        "t_end_s": 1185.57,
+        "duration_s": 3.32
+      },
+      {
+        "t_start_s": 1191.68,
+        "t_end_s": 1213.79,
+        "duration_s": 22.11
+      },
+      {
+        "t_start_s": 1234.13,
+        "t_end_s": 1236.67,
+        "duration_s": 2.54
+      },
+      {
+        "t_start_s": 1240.05,
+        "t_end_s": 1243.77,
+        "duration_s": 3.72
+      },
+      {
+        "t_start_s": 1247.59,
+        "t_end_s": 1250.5,
+        "duration_s": 2.92
+      },
+      {
+        "t_start_s": 1270.05,
+        "t_end_s": 1272.05,
+        "duration_s": 2.0
+      },
+      {
+        "t_start_s": 1276.38,
+        "t_end_s": 1278.62,
+        "duration_s": 2.24
+      },
+      {
+        "t_start_s": 1281.88,
+        "t_end_s": 1285.05,
+        "duration_s": 3.17
+      },
+      {
+        "t_start_s": 1295.65,
+        "t_end_s": 1297.74,
+        "duration_s": 2.09
+      },
+      {
+        "t_start_s": 1301.21,
+        "t_end_s": 1303.81,
+        "duration_s": 2.6
+      },
+      {
+        "t_start_s": 1306.72,
+        "t_end_s": 1309.16,
+        "duration_s": 2.44
+      },
+      {
+        "t_start_s": 1323.68,
+        "t_end_s": 1349.01,
+        "duration_s": 25.32
+      },
+      {
+        "t_start_s": 1358.43,
+        "t_end_s": 1371.11,
+        "duration_s": 12.68
+      },
+      {
+        "t_start_s": 1374.83,
+        "t_end_s": 1377.43,
+        "duration_s": 2.6
+      },
+      {
+        "t_start_s": 1381.25,
+        "t_end_s": 1386.29,
+        "duration_s": 5.04
+      },
+      {
+        "t_start_s": 1398.63,
+        "t_end_s": 1402.61,
+        "duration_s": 3.98
+      },
+      {
+        "t_start_s": 1417.1,
+        "t_end_s": 1430.76,
+        "duration_s": 13.67
+      },
+      {
+        "t_start_s": 1452.91,
+        "t_end_s": 1455.05,
+        "duration_s": 2.13
+      },
+      {
+        "t_start_s": 1464.56,
+        "t_end_s": 1467.0,
+        "duration_s": 2.44
+      },
+      {
+        "t_start_s": 1470.41,
+        "t_end_s": 1473.26,
+        "duration_s": 2.85
+      },
+      {
+        "t_start_s": 1476.72,
+        "t_end_s": 1494.46,
+        "duration_s": 17.74
+      },
+      {
+        "t_start_s": 1501.84,
+        "t_end_s": 1507.08,
+        "duration_s": 5.24
+      },
+      {
+        "t_start_s": 1520.43,
+        "t_end_s": 1525.23,
+        "duration_s": 4.8
+      },
+      {
+        "t_start_s": 1526.81,
+        "t_end_s": 1535.22,
+        "duration_s": 8.41
+      },
+      {
+        "t_start_s": 1548.37,
+        "t_end_s": 1555.75,
+        "duration_s": 7.38
+      },
+      {
+        "t_start_s": 1562.63,
+        "t_end_s": 1566.06,
+        "duration_s": 3.43
+      },
+      {
+        "t_start_s": 1567.79,
+        "t_end_s": 1571.37,
+        "duration_s": 3.58
+      },
+      {
+        "t_start_s": 1582.11,
+        "t_end_s": 1606.38,
+        "duration_s": 24.27
+      },
+      {
+        "t_start_s": 1641.55,
+        "t_end_s": 1644.71,
+        "duration_s": 3.16
+      },
+      {
+        "t_start_s": 1750.28,
+        "t_end_s": 1765.67,
+        "duration_s": 15.39
+      },
+      {
+        "t_start_s": 1828.62,
+        "t_end_s": 1831.63,
+        "duration_s": 3.01
+      },
+      {
+        "t_start_s": 1884.2,
+        "t_end_s": 1889.62,
+        "duration_s": 5.42
+      },
+      {
+        "t_start_s": 1917.31,
+        "t_end_s": 1923.02,
+        "duration_s": 5.71
+      },
+      {
+        "t_start_s": 1942.44,
+        "t_end_s": 1963.0,
+        "duration_s": 20.56
+      },
+      {
+        "t_start_s": 2076.52,
+        "t_end_s": 2083.9,
+        "duration_s": 7.38
+      },
+      {
+        "t_start_s": 2297.27,
+        "t_end_s": 2309.14,
+        "duration_s": 11.87
+      },
+      {
+        "t_start_s": 2526.38,
+        "t_end_s": 2539.39,
+        "duration_s": 13.02
+      },
+      {
+        "t_start_s": 2752.62,
+        "t_end_s": 2765.49,
+        "duration_s": 12.87
+      },
+      {
+        "t_start_s": 2978.41,
+        "t_end_s": 2987.82,
+        "duration_s": 9.41
+      },
+      {
+        "t_start_s": 3146.65,
+        "t_end_s": 3152.57,
+        "duration_s": 5.92
+      },
+      {
+        "t_start_s": 3285.42,
+        "t_end_s": 3293.25,
+        "duration_s": 7.83
+      },
+      {
+        "t_start_s": 3381.19,
+        "t_end_s": 3383.38,
+        "duration_s": 2.19
+      },
+      {
+        "t_start_s": 3386.64,
+        "t_end_s": 3405.82,
+        "duration_s": 19.18
+      },
+      {
+        "t_start_s": 3513.02,
+        "t_end_s": 3519.39,
+        "duration_s": 6.37
+      },
+      {
+        "t_start_s": 3613.14,
+        "t_end_s": 3615.4,
+        "duration_s": 2.26
+      },
+      {
+        "t_start_s": 3747.26,
+        "t_end_s": 3758.71,
+        "duration_s": 11.45
+      },
+      {
+        "t_start_s": 3989.04,
+        "t_end_s": 3997.56,
+        "duration_s": 8.51
+      },
+      {
+        "t_start_s": 4039.58,
+        "t_end_s": 4041.88,
+        "duration_s": 2.3
+      },
+      {
+        "t_start_s": 4216.44,
+        "t_end_s": 4228.79,
+        "duration_s": 12.35
+      },
+      {
+        "t_start_s": 4443.22,
+        "t_end_s": 4455.14,
+        "duration_s": 11.92
+      },
+      {
+        "t_start_s": 4682.52,
+        "t_end_s": 4694.34,
+        "duration_s": 11.82
+      },
+      {
+        "t_start_s": 4721.3,
+        "t_end_s": 4724.67,
+        "duration_s": 3.37
+      },
+      {
+        "t_start_s": 4921.09,
+        "t_end_s": 4931.56,
+        "duration_s": 10.47
+      },
+      {
+        "t_start_s": 5085.7,
+        "t_end_s": 5087.79,
+        "duration_s": 2.09
+      },
+      {
+        "t_start_s": 5140.8,
+        "t_end_s": 5149.86,
+        "duration_s": 9.05
+      }
+    ],
+    "abrupt_stops": [
+      {
+        "t_s": 576.07,
+        "speed_before": 4.576,
+        "speed_after": 1.571,
+        "front_lidar_min": 13.138,
+        "progress_mps": -1.485
+      },
+      {
+        "t_s": 1315.33,
+        "speed_before": 8.357,
+        "speed_after": 5.289,
+        "front_lidar_min": 16.678,
+        "progress_mps": -1.992
+      }
+    ]
+  },
+  "diagnosis": [
+    "No dominant failure signature detected; run appears nominal or mixed."
+  ]
+}

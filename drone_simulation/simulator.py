@@ -31,6 +31,13 @@ class DroneState:
     armed: bool
     mode: str
     timestamp: str
+    in_air: bool = False
+    mission_type: Optional[str] = None
+    mission_status: Optional[str] = None
+    total_waypoints: Optional[int] = None
+    current_waypoint_index: Optional[int] = None
+    estimated_remaining_s: Optional[int] = None
+    started_at: Optional[str] = None
     
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -66,6 +73,7 @@ class DroneSimulator:
         self.mode = "STABILIZE"
         self.target_position = None
         self.mission = None
+        self.external_mission_info = None
         self._mission_started_at = None
         self.is_flying = False
         self.max_speed = 15.0  # m/s
@@ -255,7 +263,7 @@ class DroneSimulator:
     def get_mission_info(self) -> Optional[Dict]:
         """Return mission details suitable for API/UI."""
         if not self.mission:
-            return None
+            return dict(self.external_mission_info) if self.external_mission_info else None
         total = len(self.mission.waypoints)
         idx0 = int(self.mission.current_waypoint_index or 0)
         # Rough estimate: 60s per waypoint remaining.
@@ -411,6 +419,7 @@ class DroneSimulator:
     
     def get_state(self) -> DroneState:
         """Get current drone state"""
+        mission_info = self.get_mission_info() or {}
         return DroneState(
             drone_id=self.drone_id,
             latitude=self.position[0],
@@ -421,7 +430,14 @@ class DroneSimulator:
             battery=self.battery,
             armed=self.armed,
             mode=self.mode,
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.now().isoformat(),
+            in_air=self.is_flying,
+            mission_type=mission_info.get('mission_type'),
+            mission_status=mission_info.get('status'),
+            total_waypoints=mission_info.get('total_waypoints'),
+            current_waypoint_index=mission_info.get('current_waypoint_index'),
+            estimated_remaining_s=mission_info.get('estimated_remaining_s'),
+            started_at=mission_info.get('started_at'),
         )
     
     def start_simulation(self):

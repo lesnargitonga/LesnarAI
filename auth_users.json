@@ -1,0 +1,20 @@
+[
+  {
+    "username": "lesnar",
+    "role": "admin",
+    "display_name": "lesnar",
+    "password_hash": "pbkdf2_sha256$390000$13de1703fbf4ed3553c330435cfe8397$224db23a9bd0eecd9682e095c65f4e0196723cbec3e35407fa85246a1c1f99e1"
+  },
+  {
+    "username": "sentinnel",
+    "role": "operator",
+    "display_name": "sentinnel",
+    "password_hash": "pbkdf2_sha256$390000$19b22e1861cd086d1442670e3f7f95fe$e1c9bea132c376510fc98aa05024285accca05161f481cb75689fed6a6e0df7a"
+  },
+  {
+    "username": "viewer",
+    "role": "viewer",
+    "display_name": "viewer",
+    "password_hash": "pbkdf2_sha256$390000$09dafb1d357fbd792680fb6158e748e2$507d4db2fe535e7f6df6eba8fe2a4d60901d7bdfb15f42b9d09ebe4353eeb6b6"
+  }
+]

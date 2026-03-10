@@ -17,20 +17,24 @@ A fully autonomous drone system with:
 ### 1. Start Backend Services
 ```bash
 # Windows PowerShell or WSL
-cd "d:\docs\lesnar\Lesnar AI"
-docker compose --env-file .env.example down -v
-docker compose --env-file .env.example up -d
+cd ~/workspace/LesnarAI
+python3 scripts/bootstrap_secure_deployment.py
+docker compose --env-file .env.secure down -v
+docker compose --env-file .env.secure up -d
 ```
 
 **Wait for health check:**
 ```bash
-curl -H "X-API-Key: example-operator-key" http://localhost:5000/api/health
+export LESNAR_USER="lesnar"
+export LESNAR_PASS="lesnar1234"
+export SESSION_HEADER="$(python3 scripts/request_session_token.py --username "$LESNAR_USER" --password "$LESNAR_PASS")"
+curl -H "$SESSION_HEADER" http://localhost:5000/api/health
 # Should return: {"status":"ok"}
 ```
 
 ### 2. Start Gazebo with Obstacles (WSL Terminal 1)
 ```bash
-cd ~/lesnar/LesnarAI
+cd ~/workspace/LesnarAI
 gz sim -v4 -r obstacles.sdf &
 ```
 
@@ -51,10 +55,10 @@ PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
 
 ### 4. Start Bridge Script (WSL Terminal 2 - NEW)
 ```bash
-cd ~/lesnar/LesnarAI
+cd ~/workspace/LesnarAI
 source .venv-wsl/bin/activate
 mkdir -p dataset/px4_teacher
-python3 training/px4_teacher_collect_gz.py --duration 300
+python3 training/px4_teacher_collect_gz.py --duration 0
 ```
 
 **✅ Success indicators:**
@@ -68,7 +72,7 @@ python3 training/px4_teacher_collect_gz.py --duration 300
 Navigate to `http://localhost:8080` and login:
 - **Server:** `timescaledb`
 - **Username:** `lesnar`
-- **Password:** `example-password`
+- **Password:** `POSTGRES_PASSWORD` from `.env.secure`
 - **Database:** `lesnar`
 
 **✅ Verify:** You should see tables: `drones`, `flight_log`, `command_logs`, `events`
@@ -129,14 +133,14 @@ Navigate to `http://localhost:8080` and login:
 
 #### Demo 3: Check Drone Status
 ```bash
-curl -H "X-API-Key: example-operator-key" http://localhost:5000/api/drones | jq
+curl -H "$SESSION_HEADER" http://localhost:5000/api/drones | jq
 ```
 
 **Say:** "Our REST API provides programmatic access to all drone operations. Here we see SENTINEL-01 is armed and ready."
 
 #### Demo 4: Command Takeoff
 ```bash
-curl -X POST -H "X-API-Key: example-operator-key" \
+curl -X POST -H "$SESSION_HEADER" \
   -H "Content-Type: application/json" \
   -d '{"altitude": 10}' \
   http://localhost:5000/api/drones/SENTINEL-01/takeoff
@@ -147,7 +151,7 @@ curl -X POST -H "X-API-Key: example-operator-key" \
 
 #### Demo 5: Navigate Through Obstacles
 ```bash
-curl -X POST -H "X-API-Key: example-operator-key" \
+curl -X POST -H "$SESSION_HEADER" \
   -H "Content-Type: application/json" \
   -d '{"latitude": 47.3977, "longitude": 8.5456, "altitude": 50}' \
   http://localhost:5000/api/drones/SENTINEL-01/goto
@@ -162,7 +166,7 @@ curl -X POST -H "X-API-Key: example-operator-key" \
 
 #### Demo 7: Land
 ```bash
-curl -X POST -H "X-API-Key: example-operator-key" \
+curl -X POST -H "$SESSION_HEADER" \
   http://localhost:5000/api/drones/SENTINEL-01/land
 ```
 
@@ -211,7 +215,7 @@ curl -X POST -H "X-API-Key: example-operator-key" \
 ```bash
 # Kill and restart
 sudo killall -9 gz ruby px4
-cd ~/lesnar/LesnarAI
+cd ~/workspace/LesnarAI
 gz sim -v4 -r obstacles.sdf &
 ```
 
@@ -227,20 +231,20 @@ PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
 ### If bridge script fails:
 ```bash
 # Check Redis connectivity
-docker compose exec redis redis-cli ping
+docker compose --env-file .env.secure exec redis redis-cli ping
 # Should return: PONG
 
 # Restart bridge
-cd ~/lesnar/LesnarAI
+cd ~/workspace/LesnarAI
 source .venv-wsl/bin/activate
-python3 training/px4_teacher_collect_gz.py --duration 300
+python3 training/px4_teacher_collect_gz.py --duration 0
 ```
 
 ### If Adminer won't login:
 ```bash
 # Reset Docker with fresh volumes
-docker compose --env-file .env.example down -v
-docker compose --env-file .env.example up -d
+docker compose --env-file .env.secure down -v
+docker compose --env-file .env.secure up -d
 # Wait 10 seconds, then try login again
 ```
 
@@ -270,10 +274,10 @@ A: Command → PX4 is typically <100ms. Telemetry publishes at 20Hz. The bottlen
 ```bash
 # Stop all processes
 sudo killall -9 gz ruby px4
-docker compose down
+docker compose --env-file .env.secure down
 
 # Optional: Clean volumes
-docker compose down -v
+docker compose --env-file .env.secure down -v
 ```
 
 ---
@@ -285,7 +289,7 @@ docker compose down -v
 - **Bridge Script**: `training/px4_teacher_collect_gz.py`
 - **Backend API**: `backend/app.py`
 - **Docker Setup**: `docker-compose.yml`
-- **Environment**: `.env.example`
+- **Environment**: `.env.secure`
 
 ---
 

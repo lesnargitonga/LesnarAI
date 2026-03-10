@@ -1,61 +1,113 @@
 # Lesnar AI – Training Pipeline
 
-This folder contains scripts to preprocess datasets, collect synthetic AirSim data, and train models for segmentation, supervised navigation, and RL.
+> **Canonical workflow: PX4 + Gazebo in WSL2** (see root `README.md` for full startup).  
+> AirSim-based pipelines are **legacy** — assets moved to `legacy/`. Do not use AirSim commands for the submission.
 
-NOTE (important): the AirSim-based pipeline is **legacy** and the AirSim assets/env were moved under `legacy/`.
+## Primary Workflow — PX4 + Gazebo (current)
+
+### 1) Setup WSL venv
+
+```bash
+cd ~/workspace/LesnarAI
+python3 -m venv .venv-wsl
+source .venv-wsl/bin/activate
+pip install -U pip
+pip install mavsdk numpy redis async-timeout
+```
+
+### 2) Start Gazebo with obstacle world
+
+```bash
+cd ~/workspace/LesnarAI
+gz sim -v4 -r obstacles.sdf
+```
+
+World: **85 obstacles** — 25 skyscrapers, 50 spires, 10 trees.
+
+### 3) Start PX4 SITL (connect to running Gazebo)
+
+```bash
+cd ~/PX4-Autopilot
+export PX4_GZ_MODEL="x500"
+export PX4_GZ_WORLD="obstacles"
+PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
+```
+
+Expected: `INFO [commander] Ready for takeoff!`
+
+### 4) Run the bridge / data collector
+
+**Autonomous data collection** (default — drone flies A* path and writes CSV):
+
+```bash
+cd ~/workspace/LesnarAI
+source .venv-wsl/bin/activate
+mkdir -p dataset/px4_teacher logs
+python3 training/px4_teacher_collect_gz.py \
+  --duration 0 \
+  --mavsdk-server auto \
+  --hz 5 \
+  --alt 12 \
+  --base_speed 1.2 \
+  --max_speed 2.5
+```
+
+Output:
+- `dataset/px4_teacher/telemetry_*.csv` — pose, velocity, heading, obstacle detections
+- `logs/seg_diag_*.csv` — lidar-derived obstacle events per cycle
+
+**App-controlled bridge** (operator drives via web UI — no autonomous flight):
+
+```bash
+python3 training/px4_teacher_collect_gz.py --duration 0 --mavsdk-server auto --bridge_only
+```
+
+> **Important:** `--bridge_only` produces **zero-byte CSVs** because the drone never takes off on its own. Only use it for live operator demos.
+
+### 5) Verify data collection is working
+
+```bash
+wc -l dataset/px4_teacher/telemetry_*.csv
+tail -3 dataset/px4_teacher/telemetry_*.csv
+```
+
+Expect row count to increment every few seconds.
+
+---
+
+## Legacy — AirSim-Based Pipeline (not used for submission)
+
+NOTE: the AirSim-based pipeline is legacy. AirSim assets/env were moved under `legacy/`.
 - Legacy AirSim code: `legacy/airsim/`
 - Legacy AirSim Python env: `legacy/airsim-env/`
 
-The canonical submission workflow is PX4 + Gazebo in WSL2; see the root `README.md`.
+### Dataset Preprocessing (AirSim/legacy)
 
-## 1) Setup
-
-Install dependencies into your AirSim env (or a new venv):
-
-```powershell
-# Optional: create a new venv
-# python -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -r training/requirements.txt
-```
-
-## 2) Dataset Preprocessing
-
-Unify external datasets under a common format (RGB + Depth + Pose), normalized to a fixed resolution and FPS:
+Unify external datasets under a common format (RGB + Depth + Pose):
 
 ```powershell
 python training/preprocess_datasets.py --roots D:\datasets\TUM_RGBD D:\datasets\KITTI --out D:\datasets\unified --width 640 --height 360 --fps 10 --src_fps 30
 ```
 
-The script writes to `D:\datasets\unified/<dataset>/<sequence>/` with:
-- `rgb/*.png`
-- `depth/*.png` (16-bit depth where available)
-- `poses.json`
-
-## 3) Collect Synthetic Data from AirSim
+### Collect Synthetic Data from AirSim (legacy)
 
 ```powershell
 python training/collect_airsim_dataset.py --out D:\datasets\airsim_synth --duration 120 --hz 5
 ```
 
-This captures `rgb/`, `depth/`, and `poses.json` using the front camera.
-
-## 4) Train Segmentation (Perception)
-
-Prepare `masks/` under your dataset root, then:
+### Train Segmentation (legacy)
 
 ```powershell
 python training/train_segmentation.py --data D:\datasets\unified\KITTI\seq_00 --epochs 10 --bs 4 --lr 1e-3 --out models/seg_unet.pt
 ```
 
-## 5) Supervised Navigation (CNN+LSTM)
-
-If you have recorded actions per frame in `actions/*.npy` (vx, vy, yaw_rate):
+### Supervised Navigation (legacy)
 
 ```powershell
 python training/train_navigation.py --data D:\datasets\airsim_synth --epochs 10 --bs 8 --seq_len 4 --out models/vision_nav.pt
 ```
 
-## 6) Reinforcement Learning in AirSim
+### Reinforcement Learning in AirSim (legacy)
 
 Start AirSim, then train PPO on the Gym environment:
 

@@ -3,6 +3,7 @@ import axios from 'axios';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { Search, MapPin, Check, Navigation } from 'lucide-react';
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_FALLBACK_URL, MAP_TILE_URL } from '../config';
 import 'leaflet/dist/leaflet.css';
 
 // Fix for default markers
@@ -131,7 +132,7 @@ export default function LocationPicker({
             ref={mapRef}
             zoomControl={false}
           >
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <TileLayer attribution={MAP_TILE_ATTRIBUTION} url={MAP_TILE_URL || MAP_TILE_FALLBACK_URL} />
             <ClickCapture onPick={ll => pickLatLng(ll.lat, ll.lng)} />
             <Marker position={[pending.lat, pending.lng]} />
           </MapContainer>

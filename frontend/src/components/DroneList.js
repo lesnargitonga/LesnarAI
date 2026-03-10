@@ -16,39 +16,94 @@ import {
 } from 'lucide-react';
 import { useDrones } from '../context/DroneContext';
 import { MapContainer, TileLayer, Marker } from 'react-leaflet';
+import { getDroneFlags, getDroneStatus } from '../utils/droneState';
+import { requireTypedConfirmation } from '../utils/operatorAudit';
+import { subscribeQuickSelect } from './TacticalHotkeys';
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_FALLBACK_URL, MAP_TILE_URL } from '../config';
 
 function DroneList() {
   const {
     drones,
+    fleetStatus,
+    loading,
+    error,
+    createDrone,
     armDrone,
     disarmDrone,
     takeoffDrone,
     landDrone,
+    gotoDrone,
     deleteDrone,
     emergencyLandAll,
+    clearError,
+    isDroneControlAllowed,
   } = useDrones();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [selectedDrone, setSelectedDrone] = useState(null);
+  const [selectedDroneId, setSelectedDroneId] = useState(null);
   const [actionBanner, setActionBanner] = useState(null);
   const [gotoAlt, setGotoAlt] = useState(10);
-  const [takeoffAlt, setTakeoffAlt] = useState(10);
+  const [takeoffAlt] = useState(10);
+  const [gotoLat, setGotoLat] = useState('');
+  const [gotoLon, setGotoLon] = useState('');
+
+  const selectedDrone = useMemo(
+    () => drones.find((drone) => drone.drone_id === selectedDroneId) || null,
+    [drones, selectedDroneId]
+  );
+  const selectedFlags = selectedDrone ? getDroneFlags(selectedDrone) : null;
+  const selectedTelemetryStale = !selectedDrone || !isDroneControlAllowed(selectedDrone);
+
+  React.useEffect(() => subscribeQuickSelect((droneId) => {
+    if (!droneId) return;
+    const drone = drones.find((item) => item.drone_id === droneId);
+    if (!drone) return;
+    setSelectedDroneId(droneId);
+    setGotoLat(Number(drone.latitude || 0).toFixed(6));
+    setGotoLon(Number(drone.longitude || 0).toFixed(6));
+  }), [drones]);
+
+  React.useEffect(() => {
+    if (!actionBanner) return undefined;
+    const timer = setTimeout(() => setActionBanner(null), 8000);
+    return () => clearTimeout(timer);
+  }, [actionBanner]);
 
   const fleetSummary = useMemo(() => {
+    const hasFreshFleetStatus = fleetStatus
+      && typeof fleetStatus.total_drones === 'number'
+      && (fleetStatus.total_drones > 0 || drones.length === 0);
+    if (hasFreshFleetStatus) {
+      return {
+        total: fleetStatus.total_drones,
+        armed: fleetStatus.armed_drones,
+        flying: fleetStatus.flying_drones,
+        lowBattery: fleetStatus.low_battery_drones,
+      };
+    }
     const total = drones.length;
-    const armed = drones.filter(d => d.armed).length;
-    const flying = drones.filter(d => (d.altitude || 0) > 1).length;
-    const lowBattery = drones.filter(d => (d.battery || 100) < 20).length;
+    const armed = drones.filter((drone) => drone.armed).length;
+    const flying = drones.filter((drone) => getDroneFlags(drone).flying).length;
+    const lowBattery = drones.filter((drone) => (drone.battery || 100) < 20).length;
     return { total, armed, flying, lowBattery };
-  }, [drones]);
+  }, [drones, fleetStatus]);
+  const actionableCount = useMemo(
+    () => drones.filter((drone) => {
+      const flags = getDroneFlags(drone);
+      return flags.armed || flags.flying;
+    }).length,
+    [drones]
+  );
 
-  const filteredDrones = drones.filter(drone => {
-    const matchesSearch = drone.drone_id.toLowerCase().includes(searchTerm.toLowerCase());
+  const filteredDrones = drones.filter((drone) => {
+    const droneId = String(drone.drone_id || '').toLowerCase();
+    const matchesSearch = droneId.includes(searchTerm.toLowerCase());
+    const flags = getDroneFlags(drone);
     const matchesFilter = filterStatus === 'all' ||
-      (filterStatus === 'armed' && drone.armed) ||
-      (filterStatus === 'flying' && drone.altitude > 1) ||
-      (filterStatus === 'landed' && drone.altitude <= 1 && !drone.armed);
+      (filterStatus === 'armed' && flags.armed) ||
+      (filterStatus === 'flying' && flags.flying) ||
+      (filterStatus === 'landed' && !flags.flying && !flags.armed);
 
     return matchesSearch && matchesFilter;
   });
@@ -56,24 +111,74 @@ function DroneList() {
   const handleDroneAction = async (action, droneId, ...args) => {
     try {
       setActionBanner(null);
+      if (selectedDrone && selectedTelemetryStale) {
+        setActionBanner({ type: 'error', message: 'Telemetry is stale. Command sent under operator override.' });
+      }
+      let result = null;
       switch (action) {
-        case 'arm': await armDrone(droneId); break;
-        case 'disarm': await disarmDrone(droneId); break;
-        case 'takeoff': await takeoffDrone(droneId, args[0] || 10); break;
-        case 'land': await landDrone(droneId); break;
+        case 'arm': result = await armDrone(droneId); break;
+        case 'disarm': result = await disarmDrone(droneId); break;
+        case 'takeoff': result = await takeoffDrone(droneId, args[0] || 10); break;
+        case 'land': result = await landDrone(droneId); break;
         case 'delete':
           if (window.confirm(`DELETION_PROTOCOL: Purge asset ${droneId}?`)) {
             await deleteDrone(droneId);
-            if (selectedDrone?.drone_id === droneId) setSelectedDrone(null);
+            if (selectedDroneId === droneId) setSelectedDroneId(null);
           }
           break;
         default: break;
       }
-      setActionBanner({ type: 'success', message: `${action.toUpperCase()} command acknowledged for ${droneId}` });
-    } catch {
-      setActionBanner({ type: 'error', message: `Uplink failure: Unable to ${action} ${droneId}` });
+      setActionBanner({ type: 'success', message: result?.message || `${action.toUpperCase()} confirmed for ${droneId}` });
+    } catch (error) {
+      setActionBanner({ type: 'error', message: error?.message || `Unable to ${action} ${droneId}` });
     }
   };
+
+  const handleCreateAsset = async () => {
+    const id = window.prompt('Asset ID (A-Z, 0-9, -, _, .)', `LESNAR-${Date.now().toString().slice(-4)}`);
+    if (!id) return;
+
+    try {
+      setActionBanner(null);
+      await createDrone({ drone_id: id.trim() });
+      setActionBanner({ type: 'success', message: `ASSET CREATED: ${id.trim()}` });
+      setSelectedDroneId(id.trim());
+    } catch {
+      setActionBanner({ type: 'error', message: `Unable to create asset ${id.trim()}` });
+    }
+  };
+
+  const handleGoto = async () => {
+    if (!selectedDrone) return;
+    const latitude = Number(gotoLat);
+    const longitude = Number(gotoLon);
+    const altitude = Number(gotoAlt || 10);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      setActionBanner({ type: 'error', message: 'Invalid GOTO coordinates' });
+      return;
+    }
+    try {
+      if (selectedTelemetryStale) {
+        setActionBanner({ type: 'error', message: 'Telemetry is stale. Navigation sent under operator override.' });
+      }
+      const result = await gotoDrone(selectedDrone.drone_id, latitude, longitude, altitude);
+      setActionBanner({ type: 'success', message: result?.message || `Navigation confirmed for ${selectedDrone.drone_id}` });
+    } catch (error) {
+      setActionBanner({ type: 'error', message: error?.message || `GOTO failed for ${selectedDrone.drone_id}` });
+    }
+  };
+
+  const actionBannerStyles = actionBanner?.type === 'success'
+    ? {
+      box: 'bg-lesnar-success/10 border-lesnar-success/30',
+      icon: 'text-lesnar-success',
+      text: 'text-lesnar-success',
+    }
+    : {
+      box: 'bg-lesnar-danger/10 border-lesnar-danger/30',
+      icon: 'text-lesnar-danger',
+      text: 'text-lesnar-danger',
+    };
 
   return (
     <div className="p-8 space-y-10 fade-in pb-24">
@@ -81,7 +186,7 @@ function DroneList() {
       <div className="flex flex-col md:flex-row md:items-end justify-between border-l-2 border-lesnar-accent pl-6 py-2">
         <div>
           <h1 className="text-3xl font-black text-white uppercase tracking-tighter">
-            Fleet Assets <span className="text-lesnar-accent">// DEPLOYMENT</span>
+            Fleet Assets <span className="text-lesnar-accent">DEPLOYMENT</span>
           </h1>
           <p className="text-xs font-mono text-gray-500 uppercase tracking-widest mt-1">
             Tactical Unit Management & Individual Command
@@ -89,15 +194,22 @@ function DroneList() {
         </div>
 
         <div className="mt-4 md:mt-0 flex space-x-3">
+          {actionableCount > 0 && (
+            <button
+              onClick={() => {
+                if (requireTypedConfirmation('Global emergency recall for all actionable drones?', 'CONFIRM')) {
+                  emergencyLandAll();
+                }
+              }}
+              disabled={drones.every((drone) => !isDroneControlAllowed(drone))}
+              className="p-2.5 rounded-xl border border-lesnar-danger/30 bg-lesnar-danger/5 text-lesnar-danger hover:bg-lesnar-danger/10 transition-all flex items-center px-6 font-mono font-bold text-[10px] disabled:opacity-40"
+            >
+              <AlertTriangle className="h-4 w-4 mr-2" />
+              EMERGENCY RECALL
+            </button>
+          )}
           <button
-            onClick={() => emergencyLandAll()}
-            className="p-2.5 rounded-xl border border-lesnar-danger/30 bg-lesnar-danger/5 text-lesnar-danger hover:bg-lesnar-danger/10 transition-all flex items-center px-6 font-mono font-bold text-[10px]"
-          >
-            <AlertTriangle className="h-4 w-4 mr-2" />
-            EMERGENCY RECALL
-          </button>
-          <button
-            onClick={() => { }}
+            onClick={handleCreateAsset}
             className="btn-primary flex items-center px-6"
           >
             <Plus className="h-4 w-4 mr-2" />
@@ -108,17 +220,24 @@ function DroneList() {
 
       {/* Summary Chips */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <UnitChip label="Total Frames" value={fleetSummary.total} color="accent" />
+        <UnitChip label="Total Assets" value={fleetSummary.total} color="accent" />
         <UnitChip label="Armed Units" value={fleetSummary.armed} color="warning" />
         <UnitChip label="Active Sorties" value={fleetSummary.flying} color="success" />
         <UnitChip label="Low Energy" value={fleetSummary.lowBattery} color="danger" />
       </div>
 
+      {error && (
+        <div className="bg-lesnar-danger/10 border border-lesnar-danger/30 rounded-2xl p-3 flex items-center justify-between">
+          <p className="text-xs font-mono text-lesnar-danger uppercase tracking-wider">{error}</p>
+          <button onClick={clearError} className="text-gray-400 hover:text-white"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
       {actionBanner && (
-        <div className={`bg-${actionBanner.type === 'success' ? 'lesnar-success' : 'lesnar-danger'}/10 border border-${actionBanner.type === 'success' ? 'lesnar-success' : 'lesnar-danger'}/30 rounded-2xl p-4 flex items-center justify-between slide-down`}>
+        <div className={`rounded-2xl p-4 flex items-center justify-between slide-down border ${actionBannerStyles.box}`}>
           <div className="flex items-center space-x-3">
-            <Zap className={`h-5 w-5 text-${actionBanner.type === 'success' ? 'lesnar-success' : 'lesnar-danger'}`} />
-            <p className={`text-sm font-mono text-${actionBanner.type === 'success' ? 'lesnar-success' : 'lesnar-danger'} uppercase font-bold tracking-widest`}>{actionBanner.message}</p>
+            <Zap className={`h-5 w-5 ${actionBannerStyles.icon}`} />
+            <p className={`text-sm font-mono uppercase font-bold tracking-widest ${actionBannerStyles.text}`}>{actionBanner.message}</p>
           </div>
           <button onClick={() => setActionBanner(null)} className="text-gray-500 hover:text-white"><X className="h-4 w-4" /></button>
         </div>
@@ -154,21 +273,31 @@ function DroneList() {
           </div>
 
           <div className="space-y-3 custom-scrollbar max-h-[600px] overflow-y-auto pr-2">
+            {loading && (
+              <div className="text-xs font-mono text-gray-500 uppercase tracking-widest px-2 py-3">Syncing telemetry...</div>
+            )}
+            {!loading && filteredDrones.length === 0 && (
+              <div className="text-xs font-mono text-gray-500 uppercase tracking-widest px-2 py-3">No assets match current filter.</div>
+            )}
             {filteredDrones.map(drone => (
               <div
                 key={drone.drone_id}
-                onClick={() => setSelectedDrone(drone)}
-                className={`card p-4 cursor-pointer group transition-all ${selectedDrone?.drone_id === drone.drone_id
+                onClick={() => {
+                  setSelectedDroneId(drone.drone_id);
+                  setGotoLat(Number(drone.latitude || 0).toFixed(6));
+                  setGotoLon(Number(drone.longitude || 0).toFixed(6));
+                }}
+                className={`card p-4 cursor-pointer group transition-all ${selectedDroneId === drone.drone_id
                     ? 'border-lesnar-accent/40 bg-lesnar-accent/5'
                     : 'border-white/5 hover:border-white/20'
                   }`}
               >
                 <div className="flex justify-between items-start">
                   <div className="flex items-center space-x-3">
-                    <div className={`h-2 w-2 rounded-full ${drone.altitude > 1 ? 'bg-lesnar-success animate-pulse' : drone.armed ? 'bg-lesnar-warning' : 'bg-gray-600'}`} />
+                    <div className={`h-2 w-2 rounded-full ${getDroneStatus(drone).dot}`} />
                     <span className="text-sm font-black text-white uppercase tracking-tighter">{drone.drone_id}</span>
                   </div>
-                  <span className="text-[9px] font-mono text-gray-600 uppercase">{drone.mode}</span>
+                  <span className={`text-[9px] font-mono uppercase ${getDroneStatus(drone).text}`}>{getDroneStatus(drone).label}</span>
                 </div>
                 <div className="mt-4 flex justify-between items-end">
                   <div className="space-y-1">
@@ -177,7 +306,7 @@ function DroneList() {
                   </div>
                   <div className="flex items-center space-x-2">
                     <Zap className={`h-3 w-3 ${drone.battery < 20 ? 'text-lesnar-danger animate-bounce' : 'text-lesnar-success'}`} />
-                    <span className="text-xs font-mono font-bold text-white">{Math.round(drone.battery)}%</span>
+                    <span className="text-xs font-mono font-bold text-white">{Math.round(drone.battery || 0)}%</span>
                   </div>
                 </div>
               </div>
@@ -201,18 +330,42 @@ function DroneList() {
                     </div>
                   </div>
                   <div className="flex space-x-2">
-                    <ControlButton
-                      icon={selectedDrone.armed ? PowerOff : Power}
-                      label={selectedDrone.armed ? 'DISARM' : 'ARM'}
-                      color={selectedDrone.armed ? 'danger' : 'warning'}
-                      onClick={() => handleDroneAction(selectedDrone.armed ? 'disarm' : 'arm', selectedDrone.drone_id)}
-                    />
-                    <ControlButton
-                      icon={selectedDrone.altitude > 1 ? PlaneLanding : Plane}
-                      label={selectedDrone.altitude > 1 ? 'LAND' : 'TAKEOFF'}
-                      color={selectedDrone.altitude > 1 ? 'accent' : 'success'}
-                      onClick={() => handleDroneAction(selectedDrone.altitude > 1 ? 'land' : 'takeoff', selectedDrone.drone_id, takeoffAlt)}
-                    />
+                    {!selectedFlags?.armed && (
+                      <ControlButton
+                        icon={Power}
+                        label="ARM"
+                        color="warning"
+                        disabled={false}
+                        onClick={() => handleDroneAction('arm', selectedDrone.drone_id)}
+                      />
+                    )}
+                    {selectedFlags?.armed && !selectedFlags?.flying && (
+                      <ControlButton
+                        icon={Plane}
+                        label="TAKEOFF"
+                        color="success"
+                        disabled={false}
+                        onClick={() => handleDroneAction('takeoff', selectedDrone.drone_id, takeoffAlt)}
+                      />
+                    )}
+                    {selectedFlags?.flying && (
+                      <ControlButton
+                        icon={PlaneLanding}
+                        label="LAND"
+                        color="accent"
+                        disabled={false}
+                        onClick={() => handleDroneAction('land', selectedDrone.drone_id)}
+                      />
+                    )}
+                    {selectedFlags?.armed && !selectedFlags?.flying && (
+                      <ControlButton
+                        icon={PowerOff}
+                        label="DISARM"
+                        color="danger"
+                        disabled={false}
+                        onClick={() => handleDroneAction('disarm', selectedDrone.drone_id)}
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -220,8 +373,13 @@ function DroneList() {
                   <DataBlock label="Latitude" value={Number(selectedDrone.latitude || 0).toFixed(6)} />
                   <DataBlock label="Longitude" value={Number(selectedDrone.longitude || 0).toFixed(6)} />
                   <DataBlock label="Heading" value={`${Math.round(selectedDrone.heading || 0)}°`} />
-                  <DataBlock label="Voltage" value="12.4V" />
+                  <DataBlock label="Battery" value={`${Math.round(selectedDrone.battery || 0)}%`} />
                 </div>
+                {selectedTelemetryStale && (
+                  <div className="mt-4 rounded-xl border border-lesnar-danger/30 bg-lesnar-danger/10 px-4 py-3 text-[10px] font-mono text-lesnar-danger uppercase tracking-widest">
+                    Control Lockout: Selected drone telemetry is stale.
+                  </div>
+                )}
               </div>
 
               {/* Advanced Navigation */}
@@ -238,7 +396,7 @@ function DroneList() {
                         zoom={15}
                         className="w-full h-full grayscale brightness-50 contrast-125"
                       >
-                        <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+                        <TileLayer attribution={MAP_TILE_ATTRIBUTION} url={MAP_TILE_URL || MAP_TILE_FALLBACK_URL} />
                         <Marker position={[selectedDrone.latitude || 0, selectedDrone.longitude || 0]} />
                       </MapContainer>
                     </div>
@@ -252,7 +410,31 @@ function DroneList() {
                           className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-white"
                         />
                       </div>
-                      <button className="btn-primary mt-4 self-end h-9">INITIATE GOTO</button>
+                      <div className="flex-1 grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[9px] font-mono text-gray-600 uppercase block mb-1">Latitude</label>
+                          <input
+                            type="number"
+                            step="0.000001"
+                            value={gotoLat}
+                            onChange={(e) => setGotoLat(e.target.value)}
+                            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-mono text-gray-600 uppercase block mb-1">Longitude</label>
+                          <input
+                            type="number"
+                            step="0.000001"
+                            value={gotoLon}
+                            onChange={(e) => setGotoLon(e.target.value)}
+                            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-white"
+                          />
+                        </div>
+                      </div>
+                      {(selectedFlags?.armed || selectedFlags?.flying) && (
+                        <button onClick={handleGoto} className="btn-primary mt-4 self-end h-9">INITIATE GOTO</button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -263,10 +445,10 @@ function DroneList() {
                     System Telemetry
                   </h3>
                   <div className="space-y-4">
-                    <TelemetryRow label="ESC Status" ok />
-                    <TelemetryRow label="GPS Lock" ok={selectedDrone.gps_fix > 2} />
-                    <TelemetryRow label="IMU Health" ok />
-                    <TelemetryRow label="UAVCAN Link" ok />
+                    <TelemetryRow label="ESC Status" ok={selectedFlags?.armed || selectedFlags?.flying} />
+                    <TelemetryRow label="GPS Lock" ok={Number.isFinite(Number(selectedDrone.latitude)) && Number.isFinite(Number(selectedDrone.longitude))} />
+                    <TelemetryRow label="IMU Health" ok={Boolean(selectedDrone.mode)} />
+                    <TelemetryRow label="UAVCAN Link" ok={Boolean(selectedDrone.timestamp)} />
                     <div className="pt-4 mt-4 border-t border-white/5">
                       <button
                         onClick={() => handleDroneAction('delete', selectedDrone.drone_id)}
@@ -315,7 +497,7 @@ function DataBlock({ label, value }) {
   );
 }
 
-function ControlButton({ icon: Icon, label, color, onClick }) {
+function ControlButton({ icon: Icon, label, color, onClick, disabled }) {
   const colors = {
     accent: 'hover:bg-lesnar-accent/20 text-lesnar-accent border-lesnar-accent/30',
     warning: 'hover:bg-lesnar-warning/20 text-lesnar-warning border-lesnar-warning/30',
@@ -325,7 +507,8 @@ function ControlButton({ icon: Icon, label, color, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl border transition-all ${colors[color]}`}
+      disabled={disabled}
+      className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl border transition-all ${colors[color]} disabled:opacity-40 disabled:cursor-not-allowed`}
     >
       <Icon className="h-6 w-6 mb-1" />
       <span className="text-[8px] font-black uppercase tracking-widest">{label}</span>

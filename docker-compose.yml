@@ -39,18 +39,37 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: timescaledb
+      POSTGRES_PORT: "5432"
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
-      LESNAR_USE_AIRSIM: "${LESNAR_USE_AIRSIM}"
-      ALLOW_UNSAFE_WERKZEUG: "${ALLOW_UNSAFE_WERKZEUG}"
-      AUTO_MIGRATE: "${AUTO_MIGRATE}"
-      LESNAR_ADMIN_API_KEY: "${LESNAR_ADMIN_API_KEY}"
-      LESNAR_OPERATOR_API_KEY: "${LESNAR_OPERATOR_API_KEY}"
+      LESNAR_USE_AIRSIM: "${LESNAR_USE_AIRSIM:-0}"
+      ALLOW_UNSAFE_WERKZEUG: "${ALLOW_UNSAFE_WERKZEUG:-1}"
+      AUTO_MIGRATE: "${AUTO_MIGRATE:-1}"
+      LESNAR_REQUIRE_AUTH: "${LESNAR_REQUIRE_AUTH:-1}"
+      LESNAR_ADMIN_API_KEY: "${LESNAR_ADMIN_API_KEY:-local-dev-admin-key-2025}"
+      LESNAR_OPERATOR_API_KEY: "${LESNAR_OPERATOR_API_KEY:-local-dev-operator-key-2025}"
+      LESNAR_AUTH_USERS_FILE: "/app/backend/auth_users.json"
+      LESNAR_SESSION_TTL_S: "${LESNAR_SESSION_TTL_S:-1800}"
+      LESNAR_AUDIT_CHAIN_KEY: "${LESNAR_AUDIT_CHAIN_KEY:-local-dev-audit-chain-secret-2025}"
+      LESNAR_ENFORCE_AUDIT_CHAIN: "${LESNAR_ENFORCE_AUDIT_CHAIN:-1}"
+      LESNAR_CORS_ORIGINS: "${LESNAR_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}"
+      LESNAR_OPERATIONAL_BOUNDARY: "${LESNAR_OPERATIONAL_BOUNDARY:-[]}"
+      LESNAR_EXTERNAL_TELEMETRY_STALE_AFTER_S: "${LESNAR_EXTERNAL_TELEMETRY_STALE_AFTER_S:-5.0}"
+      LESNAR_COMMAND_CONFIRM_TIMEOUT_S: "${LESNAR_COMMAND_CONFIRM_TIMEOUT_S:-2.5}"
+      LESNAR_TELEMETRY_HISTORY_INTERVAL_TICKS: "${LESNAR_TELEMETRY_HISTORY_INTERVAL_TICKS:-5}"
+      FLASK_SECRET_KEY: "${FLASK_SECRET_KEY:-local-dev-flask-secret-2025}"
       REDIS_HOST: "redis"
       REDIS_PORT: "6379"
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
       - ./shared:/app/shared
+      - ./config.json:/app/config.json
+      - ./auth_users.json:/app/backend/auth_users.json
+      - ./logs:/app/logs
     depends_on:
       timescaledb:
         condition: service_healthy

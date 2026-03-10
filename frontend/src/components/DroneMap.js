@@ -1,16 +1,19 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import api from '../api';
-import { MapContainer, TileLayer, Marker, Popup, useMap, LayersControl, useMapEvents, GeoJSON } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, GeoJSON, Polygon, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import {
-  Crosshair,
   Navigation,
-  Map as MapIcon,
   Shield,
   Activity,
   Maximize2
 } from 'lucide-react';
 import { useDrones } from '../context/DroneContext';
+import { getDroneFlags } from '../utils/droneState';
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_FALLBACK_URL, MAP_TILE_URL, OPERATIONAL_BOUNDARY } from '../config';
+import { normalizeBoundary } from '../utils/operational';
+import { subscribeQuickSelect } from './TacticalHotkeys';
+import { getMapTileProfile, readUiPreferences } from '../utils/uiPreferences';
 import 'leaflet/dist/leaflet.css';
 
 // Fix for default markers
@@ -23,13 +26,15 @@ L.Icon.Default.mergeOptions({
 
 // Tactical Drone Icon
 const createTacticalDroneIcon = (drone) => {
-  const isCritical = drone.mode === 'EMERGENCY' || drone.battery < 20;
-  const color = isCritical ? '#FF1F6D' : (drone.altitude > 1 ? '#00FF9D' : '#00FDFF');
+  const { altitude, battery, flying } = getDroneFlags(drone);
+  const heading = Number(drone.heading) || 0;
+  const isCritical = drone.mode === 'EMERGENCY' || battery < 20;
+  const color = isCritical ? '#FF1F6D' : (flying || altitude > 1 ? '#00FF9D' : '#00FDFF');
 
   return L.divIcon({
     className: 'tactical-drone-marker',
     html: `
-      <div style="transform: rotate(${drone.heading}deg); transition: transform 0.5s ease-out;">
+      <div style="transform: rotate(${heading}deg); transition: transform 0.5s ease-out;">
         <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M20 5L32 30L20 24L8 30L20 5Z" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
           <circle cx="20" cy="24" r="3" fill="${color}" />
@@ -49,9 +54,12 @@ function MapUpdater({ drones, autoFollow }) {
   const map = useMap();
   useEffect(() => {
     if (!autoFollow) return;
-    if (drones.length > 0) {
+    const validDrones = drones.filter(
+      (drone) => Number.isFinite(Number(drone.latitude)) && Number.isFinite(Number(drone.longitude))
+    );
+    if (validDrones.length > 0) {
       const group = new L.featureGroup(
-        drones.map(drone => L.marker([drone.latitude, drone.longitude]))
+        validDrones.map((drone) => L.marker([Number(drone.latitude), Number(drone.longitude)]))
       );
       map.fitBounds(group.getBounds().pad(0.2));
     }
@@ -59,11 +67,39 @@ function MapUpdater({ drones, autoFollow }) {
   return null;
 }
 
-function DroneMap({ socket }) {
+function SelectedDroneFocus({ drone }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!drone) return;
+    const lat = Number(drone.latitude);
+    const lon = Number(drone.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    map.flyTo([lat, lon], Math.max(map.getZoom(), 14), { animate: true, duration: 0.8 });
+  }, [drone, map]);
+  return null;
+}
+
+function DroneMap({ socket, linkMetrics }) {
   const { drones, updateTelemetry } = useDrones();
   const [autoFollow, setAutoFollow] = useState(true);
   const [obstacles, setObstacles] = useState(null);
   const [hudVisible, setHudVisible] = useState(true);
+  const [selectedDroneId, setSelectedDroneId] = useState(null);
+  const boundary = normalizeBoundary(OPERATIONAL_BOUNDARY);
+  const [replayMode, setReplayMode] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const [uiPrefs, setUiPrefs] = useState(() => readUiPreferences());
+
+  useEffect(() => {
+    const handler = (event) => setUiPrefs(event.detail || readUiPreferences());
+    window.addEventListener('lesnar:ui-preferences', handler);
+    return () => window.removeEventListener('lesnar:ui-preferences', handler);
+  }, []);
+
+  const mapTileProfile = getMapTileProfile(uiPrefs.mapProvider);
+
+  const selectedDrone = drones.find((drone) => drone.drone_id === selectedDroneId) || null;
 
   useEffect(() => {
     if (socket) {
@@ -75,6 +111,33 @@ function DroneMap({ socket }) {
   useEffect(() => {
     api.get('/api/obstacles').then(res => setObstacles(res.data)).catch(() => setObstacles(null));
   }, []);
+
+  useEffect(() => subscribeQuickSelect((droneId) => {
+    if (droneId) {
+      setSelectedDroneId(droneId);
+      setAutoFollow(false);
+    }
+  }), []);
+
+  useEffect(() => {
+    if (!replayMode || !selectedDroneId) {
+      setHistory([]);
+      setHistoryIndex(0);
+      return;
+    }
+    api.get(`/api/drones/${selectedDroneId}/history?limit=300`)
+      .then((res) => {
+        const samples = Array.isArray(res.data?.samples) ? res.data.samples : [];
+        setHistory(samples);
+        setHistoryIndex(Math.max(0, samples.length - 1));
+      })
+      .catch(() => {
+        setHistory([]);
+        setHistoryIndex(0);
+      });
+  }, [replayMode, selectedDroneId]);
+
+  const replaySample = history[historyIndex] || null;
 
   return (
     <div className="h-full relative overflow-hidden flex flex-col fade-in">
@@ -105,6 +168,13 @@ function DroneMap({ socket }) {
 
         <div className="flex space-x-3 pointer-events-auto">
           <button
+            onClick={() => setReplayMode((prev) => !prev)}
+            className={`glass-dark border p-3 rounded-xl transition-all ${replayMode ? 'border-lesnar-warning/50 text-lesnar-warning' : 'border-white/10 text-gray-500'}`}
+            title="Replay telemetry history"
+          >
+            <Activity className="h-5 w-5" />
+          </button>
+          <button
             onClick={() => setAutoFollow(!autoFollow)}
             className={`glass-dark border p-3 rounded-xl transition-all ${autoFollow ? 'border-lesnar-accent/50 text-lesnar-accent' : 'border-white/10 text-gray-500'}`}
             title="Auto-Follow Active Assets"
@@ -124,16 +194,23 @@ function DroneMap({ socket }) {
       <div className="flex-1 filter grayscale brightness-50 contrast-125">
         <MapContainer
           center={[0, 0]}
-          zoom={3}
+          zoom={Number(uiPrefs.defaultZoom) || 12}
           zoomControl={false}
           className="w-full h-full bg-navy-black"
         >
           <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+            attribution={MAP_TILE_URL ? MAP_TILE_ATTRIBUTION : mapTileProfile.attribution}
+            url={MAP_TILE_URL || mapTileProfile.url || MAP_TILE_FALLBACK_URL}
           />
 
-          {obstacles && (
+          {boundary.length > 2 && (
+            <Polygon
+              positions={boundary}
+              pathOptions={{ color: '#FFCE00', weight: 2, fillOpacity: 0.05, dashArray: '6, 6' }}
+            />
+          )}
+
+          {!linkMetrics?.degradedMode && obstacles && (
             <GeoJSON
               data={obstacles}
               style={{ color: '#FF1F6D', weight: 1, fillOpacity: 0.1, dashArray: '5, 5' }}
@@ -141,12 +218,34 @@ function DroneMap({ socket }) {
           )}
 
           <MapUpdater drones={drones} autoFollow={autoFollow} />
+          <SelectedDroneFocus drone={!autoFollow ? selectedDrone : null} />
 
-          {drones.map((drone) => (
+          {uiPrefs.showFlightPaths && replayMode && history.length > 1 && (
+            <Polyline
+              positions={history.map((sample) => [Number(sample.latitude), Number(sample.longitude)])}
+              pathOptions={{ color: '#FFCE00', weight: 2 }}
+            />
+          )}
+
+          {replayMode && replaySample && Number.isFinite(Number(replaySample.latitude)) && Number.isFinite(Number(replaySample.longitude)) && (
+            <Marker
+              position={[Number(replaySample.latitude), Number(replaySample.longitude)]}
+              icon={createTacticalDroneIcon({ ...selectedDrone, ...replaySample })}
+            />
+          )}
+
+          {!replayMode && drones
+            .filter((drone) => Number.isFinite(Number(drone.latitude)) && Number.isFinite(Number(drone.longitude)))
+            .map((drone) => {
+            const altitude = Number(drone.altitude) || 0;
+            const speed = Number(drone.speed) || 0;
+            const battery = Number(drone.battery) || 0;
+            return (
             <Marker
               key={drone.drone_id}
-              position={[drone.latitude, drone.longitude]}
+              position={[Number(drone.latitude), Number(drone.longitude)]}
               icon={createTacticalDroneIcon(drone)}
+              eventHandlers={{ click: () => setSelectedDroneId(drone.drone_id) }}
             >
               <Popup className="tactical-popup">
                 <div className="p-4 bg-navy-black text-white font-mono min-w-[200px]">
@@ -162,25 +261,32 @@ function DroneMap({ socket }) {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500 uppercase">Altitude</span>
-                      <span className="text-white">{drone.altitude.toFixed(1)}M</span>
+                      <span className="text-white">{altitude.toFixed(1)}M</span>
                     </div>
                     <div className="flex justify-between font-bold">
                       <span className="text-gray-500 uppercase">Velocity</span>
-                      <span className="text-lesnar-accent">{drone.speed.toFixed(2)} M/S</span>
+                      <span className="text-lesnar-accent">{speed.toFixed(2)} M/S</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500 uppercase">Power</span>
-                      <span className={drone.battery < 20 ? 'text-lesnar-danger' : 'text-white'}>{drone.battery.toFixed(0)}%</span>
+                      <span className={battery < 20 ? 'text-lesnar-danger' : 'text-white'}>{battery.toFixed(0)}%</span>
                     </div>
                   </div>
 
-                  <button className="w-full mt-4 py-2 bg-lesnar-accent/10 border border-lesnar-accent/30 text-[10px] text-lesnar-accent uppercase font-bold rounded-lg hover:bg-lesnar-accent/20 transition-all">
+                  <button
+                    onClick={() => {
+                      setSelectedDroneId(drone.drone_id);
+                      setAutoFollow(false);
+                    }}
+                    className="w-full mt-4 py-2 bg-lesnar-accent/10 border border-lesnar-accent/30 text-[10px] text-lesnar-accent uppercase font-bold rounded-lg hover:bg-lesnar-accent/20 transition-all"
+                  >
                     Establish Direct Link
                   </button>
                 </div>
               </Popup>
             </Marker>
-          ))}
+            );
+          })}
         </MapContainer>
       </div>
 
@@ -193,28 +299,39 @@ function DroneMap({ socket }) {
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-4 scrollbar-hide">
-            {drones.map(drone => (
-              <div key={drone.drone_id} className="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-lesnar-accent/30 transition-all group cursor-pointer">
+            {drones.map((drone) => {
+              const { altitude, speed, flying } = getDroneFlags(drone);
+              const isSelected = selectedDroneId === drone.drone_id;
+              return (
+              <div
+                key={drone.drone_id}
+                onClick={() => {
+                  setSelectedDroneId(drone.drone_id);
+                  setAutoFollow(false);
+                }}
+                className={`p-4 rounded-xl bg-white/5 border transition-all group cursor-pointer ${isSelected ? 'border-lesnar-accent/60 bg-lesnar-accent/5' : 'border-white/10 hover:border-lesnar-accent/30'}`}
+              >
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-[10px] font-bold text-white uppercase group-hover:text-lesnar-accent transition-colors">{drone.drone_id}</span>
-                  <div className={`h-1.5 w-1.5 rounded-full ${drone.altitude > 1 ? 'bg-lesnar-success animate-pulse' : 'bg-gray-600'}`} />
+                  <div className={`h-1.5 w-1.5 rounded-full ${flying ? 'bg-lesnar-success animate-pulse' : 'bg-gray-600'}`} />
                 </div>
                 <div className="flex justify-between text-[8px] font-mono text-gray-500">
-                  <span>ALT: {drone.altitude.toFixed(1)}M</span>
-                  <span>SPD: {drone.speed.toFixed(1)}M/S</span>
+                  <span>ALT: {altitude.toFixed(1)}M</span>
+                  <span>SPD: {speed.toFixed(1)}M/S</span>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
 
           <div className="pt-4 border-t border-white/5">
             <div className="bg-lesnar-accent/5 p-4 rounded-xl border border-lesnar-accent/10">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] font-mono text-gray-400 uppercase">Signal Stability</span>
-                <span className="text-[10px] font-mono text-lesnar-success">98%</span>
+                <span className={`text-[10px] font-mono ${linkMetrics?.degradedMode ? 'text-lesnar-warning' : 'text-lesnar-success'}`}>{linkMetrics?.degradedMode ? 'DEGRADED' : '98%'}</span>
               </div>
               <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                <div className="h-full w-[98%] bg-lesnar-accent" />
+                <div className={`h-full ${linkMetrics?.degradedMode ? 'w-[55%] bg-lesnar-warning' : 'w-[98%] bg-lesnar-accent'}`} />
               </div>
             </div>
           </div>
@@ -222,6 +339,21 @@ function DroneMap({ socket }) {
       )}
 
       {/* Map Scale Hook - Decorative */}
+      {replayMode && history.length > 1 && (
+        <div className="absolute left-10 right-10 bottom-24 z-[1000] glass-dark border border-white/10 rounded-2xl px-4 py-3 flex items-center space-x-4">
+          <span className="text-[10px] font-mono uppercase text-lesnar-warning whitespace-nowrap">Replay</span>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, history.length - 1)}
+            value={historyIndex}
+            onChange={(e) => setHistoryIndex(Number(e.target.value))}
+            className="flex-1 accent-lesnar-warning"
+          />
+          <span className="text-[10px] font-mono uppercase text-gray-400 whitespace-nowrap">{replaySample?.timestamp || '—'}</span>
+        </div>
+      )}
+
       <div className="absolute bottom-10 left-10 z-[1000] pointer-events-none">
         <div className="flex flex-col space-y-2">
           <div className="w-40 h-[10px] border-b border-l border-r border-lesnar-accent/40 relative">

@@ -1,46 +1,49 @@
 {
-  "drone_settings": {
-    "max_speed": 15.0,
-    "max_altitude": 120.0,
-    "takeoff_altitude": 10.0,
-    "battery_warning_level": 20.0,
-    "battery_critical_level": 5.0,
-    "auto_land_battery": 10.0,
-    "separation_distance": 10.0
-  },
-  "api_settings": {
-    "host": "127.0.0.1",
-    "port": 5000,
-    "debug": false,
-    "enable_cors": true
-  },
-  "simulation_settings": {
-    "update_rate": 10,
-    "physics_enabled": true,
-    "weather_simulation": false,
-    "collision_detection": true
-  },
   "ai_settings": {
     "computer_vision_enabled": true,
-    "swarm_intelligence_enabled": true,
-    "obstacle_avoidance_enabled": true,
     "detection_threshold": 0.5,
+    "obstacle_avoidance_enabled": true,
     "segmentation": {
-      "enabled": false,
       "backend": "torch",
+      "enabled": false,
+      "img_size": [
+        256,
+        256
+      ],
       "model_path": "models/unet_torch_synth/model.pt",
-      "img_size": [256, 256],
       "threshold": 0.5
-    }
+    },
+    "swarm_intelligence_enabled": true
   },
-  "logging": {
-    "level": "INFO",
-    "file": "lesnar_ai.log",
-    "max_file_size": "10MB",
-    "backup_count": 5
+  "api_settings": {
+    "debug": false,
+    "enable_cors": true,
+    "host": "127.0.0.1",
+    "port": 5000
   },
   "data_pipeline": {
     "dataset_root": "D:/datasets",
     "scan_on_init": true
+  },
+  "drone_settings": {
+    "auto_land_battery": 10.0,
+    "battery_critical_level": 5.0,
+    "battery_warning_level": 20.0,
+    "max_altitude": 120.0,
+    "max_speed": 15.0,
+    "separation_distance": 10.0,
+    "takeoff_altitude": 10.0
+  },
+  "logging": {
+    "backup_count": 5,
+    "file": "lesnar_ai.log",
+    "level": "INFO",
+    "max_file_size": "10MB"
+  },
+  "simulation_settings": {
+    "collision_detection": true,
+    "physics_enabled": true,
+    "update_rate": 10,
+    "weather_simulation": false
   }
 }

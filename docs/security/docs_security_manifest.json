@@ -1,0 +1,49 @@
+{
+  "generated_at": "2026-03-06T13:26:15.265812+00:00",
+  "algorithm": "sha256",
+  "dataset_root": "/home/lesnar/workspace/LesnarAI/docs/security",
+  "file_count": 6,
+  "files": [
+    {
+      "path": "NATSEC_IMPLEMENTATION.md",
+      "size_bytes": 2464,
+      "modified_utc": "2026-03-06T13:14:00.638139+00:00",
+      "sha256": "97fa39c5f16c7705326eb1492cd6df6f401a2539a2a1d6f77edddb00d453878c"
+    },
+    {
+      "path": "SECURITY_POSTURE.md",
+      "size_bytes": 501,
+      "modified_utc": "2026-03-06T13:26:15.138585+00:00",
+      "sha256": "f2341304c9ca31a1ba75ea79690f46de227b19a6662267139e08fcacec0bf2d7"
+    },
+    {
+      "path": "audit_chain.jsonl",
+      "size_bytes": 402,
+      "modified_utc": "2026-03-06T13:25:22.928186+00:00",
+      "sha256": "8e8e2af42c036161d9e699ec490062b465f8c1fd758fb4d87a14cb29a33f68db"
+    },
+    {
+      "path": "audit_chain.legacy.jsonl",
+      "size_bytes": 382,
+      "modified_utc": "2026-03-06T13:17:07.495146+00:00",
+      "sha256": "0c6f80c368dfb393f534f5a92d853398f796de25db175f150375e207c6274b8e"
+    },
+    {
+      "path": "dataset_manifest_px4_teacher.json",
+      "size_bytes": 1709,
+      "modified_utc": "2026-03-06T13:14:25.703292+00:00",
+      "sha256": "147c4b27f8ca64da711f0781be8e7575ca9199cc0ac1450006b3ce18bb48f55a"
+    },
+    {
+      "path": "security_posture_report.json",
+      "size_bytes": 512,
+      "modified_utc": "2026-03-06T13:26:15.134585+00:00",
+      "sha256": "41b93c77dfb1921d647379f85cac57bf6389bc1cd76738858a2a11ef873bd93a"
+    }
+  ],
+  "signature": {
+    "type": "hmac-sha256",
+    "key_env": "LESNAR_DATASET_SIGN_KEY",
+    "value": "3ff565891e9d8f50499f05f9edb4b09cbfbff0e8c0884e358d21b89ec35e2470"
+  }
+}

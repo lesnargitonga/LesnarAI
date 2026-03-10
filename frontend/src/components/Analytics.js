@@ -8,10 +8,13 @@ import {
   Compass,
   BarChart3,
   Zap,
-  AlertCircle
+  AlertCircle,
+  Download,
+  FileJson
 } from 'lucide-react';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { useDrones } from '../context/DroneContext';
+import { getDroneFlags } from '../utils/droneState';
 
 function Analytics({ socket }) {
   const { drones, updateTelemetry } = useDrones();
@@ -60,20 +63,22 @@ function Analytics({ socket }) {
 
   useEffect(() => {
     const loadSegmentationLog = async () => {
-      setError(null);
       try {
         const res = await api.get('/api/logs/segmentation/latest');
         if (res.data?.success && Array.isArray(res.data.rows)) {
           setSegLog({ file: res.data.file, rows: res.data.rows });
+          setError(null);
         }
       } catch {
-        setError('Log acquisition failure');
+        // non-fatal – keep existing rows if any
       }
     };
     loadSegmentationLog();
+    const id = setInterval(loadSegmentationLog, 10000); // refresh every 10 s
+    return () => clearInterval(id);
   }, []);
 
-  const flyingDrones = drones.filter(d => d.altitude > 1.0);
+  const flyingDrones = drones.filter((d) => getDroneFlags(d).flying);
   const avgBattery = drones.length
     ? Math.round(drones.reduce((s, d) => s + (d.battery || 0), 0) / drones.length)
     : 0;
@@ -82,17 +87,56 @@ function Analytics({ socket }) {
     : '0.0';
   const sessionMinutes = Math.round((Date.now() - sessionStart) / 60000);
 
+  const downloadBlob = (filename, content, type) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportTelemetrySnapshot = () => {
+    const payload = {
+      exported_at: new Date().toISOString(),
+      fleet_size: drones.length,
+      flying_drones: flyingDrones.length,
+      avg_battery: avgBattery,
+      avg_speed: avgSpeed,
+      telemetry_history: telemetryHistory,
+      health: healthData,
+    };
+    downloadBlob('lesnar-telemetry-snapshot.json', JSON.stringify(payload, null, 2), 'application/json');
+  };
+
+  const exportSegmentationCsv = () => {
+    if (!segLog.rows.length) return;
+    const headers = ['drone_id', 'detected_class', 'confidence', 'timestamp'];
+    const rows = segLog.rows.map((row) => headers.map((header) => JSON.stringify(row[header] ?? '')).join(','));
+    downloadBlob('lesnar-segmentation-log.csv', [headers.join(','), ...rows].join('\n'), 'text/csv;charset=utf-8');
+  };
+
   return (
     <div className="p-8 space-y-10 fade-in">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between border-l-2 border-lesnar-accent pl-6 py-2">
         <div>
           <h1 className="text-3xl font-black text-white uppercase tracking-tighter">
-            Fleet Intelligence <span className="text-lesnar-accent">// ANALYTICS</span>
+            Fleet Intelligence <span className="text-lesnar-accent">ANALYTICS</span>
           </h1>
           <p className="text-xs font-mono text-gray-500 uppercase tracking-widest mt-1">
             Real-time Telemetry Data & Predictive Diagnostics
           </p>
+        </div>
+        <div className="mt-4 md:mt-0 flex items-center gap-3">
+          <button onClick={exportTelemetrySnapshot} className="p-2.5 rounded-xl border border-white/10 hover:bg-white/5 transition-colors text-gray-300">
+            <FileJson className="h-4 w-4" />
+          </button>
+          <button onClick={exportSegmentationCsv} disabled={!segLog.rows.length} className="btn-primary flex items-center px-5 disabled:opacity-40 disabled:cursor-not-allowed">
+            <Download className="h-4 w-4 mr-2" />
+            EXPORT LOGS
+          </button>
         </div>
       </div>
 
@@ -197,21 +241,27 @@ function Analytics({ socket }) {
               {segLog.rows.slice(0, 10).map((row, idx) => (
                 <tr key={idx} className="group hover:bg-white/[0.02] transition-colors">
                   <td className="py-4 text-[11px] font-mono text-white">{row.drone_id || 'UAV-01'}</td>
-                  <td className="py-4 text-[11px] font-mono text-lesnar-accent font-bold uppercase">{row.detected_class || 'OBJECT'}</td>
+                  <td className="py-4 text-[11px] font-mono text-lesnar-accent font-bold uppercase">{row.detected_class || row.class_name || row.label || 'OBJECT'}</td>
                   <td className="py-4">
                     <div className="flex items-center space-x-2">
                       <div className="w-16 h-1 bg-white/5 rounded-full overflow-hidden">
-                        <div className="h-full bg-lesnar-accent" style={{ width: `${(row.confidence * 100) || 85}%` }} />
+                        <div className="h-full bg-lesnar-accent" style={{ width: `${Math.max(0, Math.min(100, Number(row.confidence || row.score || 0) * 100 || 0))}%` }} />
                       </div>
-                      <span className="text-[10px] font-mono text-gray-400">{(row.confidence * 100 || 85).toFixed(0)}%</span>
+                      <span className="text-[10px] font-mono text-gray-400">{(Math.max(0, Math.min(100, Number(row.confidence || row.score || 0) * 100 || 0))).toFixed(0)}%</span>
                     </div>
                   </td>
-                  <td className="py-4 text-[11px] font-mono text-gray-400">LOC_FIXED</td>
-                  <td className="py-4 text-[10px] font-mono text-gray-600 uppercase">SYNC_OK</td>
+                  <td className="py-4 text-[11px] font-mono text-gray-400">{row.coordinates || row.location || row.xy || 'N/A'}</td>
+                  <td className="py-4 text-[10px] font-mono text-gray-600 uppercase">{row.timestamp || row.created_at || 'N/A'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {!error && segLog.rows.length === 0 && (
+            <div className="py-12 flex flex-col items-center justify-center space-y-3 opacity-40">
+              <BarChart3 className="h-10 w-10 text-lesnar-accent" />
+              <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">No segmentation log captured yet</p>
+            </div>
+          )}
           {error && (
             <div className="py-12 flex flex-col items-center justify-center space-y-3 opacity-30">
               <AlertCircle className="h-10 w-10 text-lesnar-danger" />

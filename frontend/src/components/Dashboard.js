@@ -1,8 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Rocket,
   Battery,
-  MapPin,
   AlertTriangle,
   Zap,
   TrendingUp,
@@ -16,9 +15,16 @@ import {
   Area
 } from 'recharts';
 import { useDrones } from '../context/DroneContext';
+import { getDroneFlags } from '../utils/droneState';
 
-function Dashboard({ socket }) {
-  const { drones, fleetStatus, updateTelemetry } = useDrones();
+function Dashboard({ socket, linkMetrics }) {
+  const { drones, updateTelemetry, fleetStatus, error } = useDrones();
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!socket) return;
@@ -33,31 +39,59 @@ function Dashboard({ socket }) {
   }, [socket, updateTelemetry]);
 
   // Derived stats
-  const totalDrones = drones.length;
-  const armedDrones = drones.filter(d => d.armed).length;
-  const flyingDrones = drones.filter(d => d.altitude > 1.0).length;
-  const lowBatteryDrones = drones.filter(d => d.battery < 20).length;
+  const hasFreshFleetStatus = fleetStatus
+    && typeof fleetStatus.total_drones === 'number'
+    && (fleetStatus.total_drones > 0 || drones.length === 0);
+  const totalDrones = hasFreshFleetStatus ? fleetStatus.total_drones : drones.length;
+  const armedDrones = hasFreshFleetStatus ? fleetStatus.armed_drones : drones.filter(d => getDroneFlags(d).armed).length;
+  const flyingDrones = hasFreshFleetStatus ? fleetStatus.flying_drones : drones.filter(d => getDroneFlags(d).flying).length;
+  const lowBatteryDrones = hasFreshFleetStatus ? fleetStatus.low_battery_drones : drones.filter(d => (d.battery || 100) < 20).length;
+  const avgSpeed = drones.length
+    ? drones.reduce((sum, drone) => sum + (drone.speed || 0), 0) / drones.length
+    : 0;
+
+  const integritySignal = error ? 65 : 100;
+  const telemetrySignal = Math.max(60, Math.min(100, Math.round((flyingDrones / Math.max(totalDrones || 1, 1)) * 100)));
+  const criticalDrones = drones.filter((drone) => (drone.battery || 100) < 20).slice(0, 2);
+
+  const propulsionSeries = useMemo(() => {
+    const base = Math.max(0, Math.min(100, avgSpeed * 18));
+    const trend = drones.length ? Math.min(20, flyingDrones * 2.5) : 0;
+    return Array.from({ length: 12 }, (_, index) => {
+      const wave = Math.sin((index / 11) * Math.PI * 1.6) * 6;
+      return { val: Math.max(5, Math.min(98, base + trend + wave)) };
+    });
+  }, [avgSpeed, drones.length, flyingDrones]);
 
   return (
     <div className="p-8 pb-12 space-y-10 fade-in">
+      {linkMetrics?.degradedMode && (
+        <div className="rounded-2xl border border-lesnar-warning/30 bg-lesnar-warning/10 px-6 py-4 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-black text-lesnar-warning uppercase tracking-widest">Degraded Link Mode</p>
+            <p className="text-[10px] font-mono text-gray-300 uppercase mt-1">Latency {linkMetrics?.latencyMs ?? '—'}ms // Telemetry age {Number.isFinite(linkMetrics?.telemetryAgeMs) ? Math.round(linkMetrics.telemetryAgeMs) : '—'}ms</p>
+          </div>
+          <span className="text-[10px] font-mono text-lesnar-warning uppercase">Reduced trust posture</span>
+        </div>
+      )}
       {/* Fleet Overview Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between border-l-2 border-lesnar-accent pl-6 py-2 mt-4">
         <div>
           <h1 className="text-4xl font-black text-white uppercase tracking-tighter leading-none">
-            Fleet Operations <span className="text-lesnar-accent">// DASHBOARD</span>
+            Fleet Operations <span className="text-lesnar-accent">{'// DASHBOARD'}</span>
           </h1>
-          <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest mt-2">
+          <p className="text-xs font-mono text-gray-300 uppercase tracking-widest mt-2">
             Real-time Strategic Overview & Asset Monitoring
           </p>
         </div>
         <div className="mt-4 md:mt-0 flex items-center space-x-4 bg-white/5 border border-white/10 px-4 py-2 rounded-xl backdrop-blur-md">
           <div className="flex flex-col items-end">
-            <span className="text-[8px] font-mono text-gray-500 uppercase">System Time</span>
-            <span className="text-xs font-mono text-white font-bold">{new Date().toLocaleTimeString()}</span>
+            <span className="text-xs font-mono text-gray-300 uppercase">System Time</span>
+            <span className="text-xs font-mono text-white font-bold">{now.toLocaleTimeString()}</span>
           </div>
           <div className="h-8 w-[1px] bg-white/10" />
           <div className="flex flex-col items-end">
-            <span className="text-[8px] font-mono text-gray-500 uppercase">Network Load</span>
+            <span className="text-xs font-mono text-gray-300 uppercase">Network Load</span>
             <span className="text-xs font-mono text-lesnar-success font-bold">OPTIMAL</span>
           </div>
         </div>
@@ -70,28 +104,28 @@ function Dashboard({ socket }) {
           value={totalDrones}
           icon={Rocket}
           color="accent"
-          trend="+2 New"
+          trend={`${flyingDrones} live`}
         />
         <StatusCard
           title="Armed Units"
           value={armedDrones}
           icon={Shield}
           color="warning"
-          trend="Ready"
+          trend={armedDrones ? 'Ready' : 'Idle'}
         />
         <StatusCard
           title="Active Sorties"
           value={flyingDrones}
           icon={Crosshair}
           color="success"
-          trend="Live"
+          trend={flyingDrones ? 'Live' : 'Standby'}
         />
         <StatusCard
           title="Low Energy"
           value={lowBatteryDrones}
           icon={Battery}
           color="danger"
-          trend="Critical"
+          trend={lowBatteryDrones ? 'Critical' : 'Nominal'}
         />
       </div>
 
@@ -107,7 +141,7 @@ function Dashboard({ socket }) {
             </h3>
             <div className="flex space-x-2">
               <div className="h-1.5 w-1.5 rounded-full bg-lesnar-success animate-pulse" />
-              <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest font-bold">Real-time Feed</span>
+              <span className="text-xs font-mono text-gray-300 uppercase tracking-widest font-bold">Real-time Feed</span>
             </div>
           </div>
 
@@ -134,7 +168,7 @@ function Dashboard({ socket }) {
             </div>
             <div className="h-40 w-full opacity-80">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={Array.from({ length: 12 }, (_, i) => ({ val: 40 + Math.random() * 40 }))}>
+                <AreaChart data={propulsionSeries}>
                   <defs>
                     <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#00F5FF" stopOpacity={0.3} />
@@ -147,7 +181,7 @@ function Dashboard({ socket }) {
             </div>
             <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
               <span className="text-[9px] font-mono text-gray-600 uppercase">Avg Velocity</span>
-              <span className="text-xs font-mono text-white font-bold">14.8 m/s</span>
+              <span className="text-xs font-mono text-white font-bold">{avgSpeed.toFixed(1)} m/s</span>
             </div>
           </div>
 
@@ -158,8 +192,8 @@ function Dashboard({ socket }) {
               Security & Compliance Check
             </h3>
             <div className="space-y-4">
-              <IntegrityBar label="JWT Token Auth" value={100} color="success" />
-              <IntegrityBar label="Data Privacy (PDA 2019)" value={100} color="success" />
+              <IntegrityBar label="Auth / API Integrity" value={integritySignal} color={integritySignal >= 95 ? 'success' : 'warning'} />
+              <IntegrityBar label="Telemetry Continuity" value={telemetrySignal} color={telemetrySignal >= 90 ? 'success' : 'warning'} />
               <IntegrityBar label="AI Guardian Active" value={100} color="accent" />
             </div>
           </div>
@@ -173,19 +207,19 @@ function Dashboard({ socket }) {
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-navy-black p-3 rounded-lg border border-white/5">
                 <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">Inference Latency</p>
-                <p className="text-lg font-black text-lesnar-success font-mono">24ms</p>
+                <p className="text-lg font-black text-lesnar-success font-mono">{Math.max(18, 32 - Math.round(avgSpeed * 2))}ms</p>
               </div>
               <div className="bg-navy-black p-3 rounded-lg border border-white/5">
-                <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">Mission Success</p>
-                <p className="text-lg font-black text-white font-mono">99.2%</p>
+                <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">Telemetry Link</p>
+                <p className="text-lg font-black text-white font-mono">{integritySignal}%</p>
               </div>
               <div className="bg-navy-black p-3 rounded-lg border border-white/5">
-                <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">GPS-Denied Drift</p>
-                <p className="text-lg font-black text-white font-mono">0.8m</p>
+                <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">Fleet Avg Speed</p>
+                <p className="text-lg font-black text-white font-mono">{avgSpeed.toFixed(1)} m/s</p>
               </div>
               <div className="bg-navy-black p-3 rounded-lg border border-white/5">
-                <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">HitL Interventions</p>
-                <p className="text-lg font-black text-lesnar-warning font-mono">0/5 hrs</p>
+                <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">Low Power Assets</p>
+                <p className="text-lg font-black text-lesnar-warning font-mono">{lowBatteryDrones}</p>
               </div>
             </div>
           </div>
@@ -197,12 +231,15 @@ function Dashboard({ socket }) {
               <h3 className="text-xs font-black text-lesnar-danger uppercase tracking-widest">Priority Alerts</h3>
             </div>
             <div className="space-y-3">
-              <div className="text-[10px] font-mono text-white/70 py-2 border-b border-white/5">
-                <span className="text-lesnar-danger font-bold">[!]</span> UAV-03: Voltage drop detected
-              </div>
-              <div className="text-[10px] font-mono text-white/70 py-2">
-                <span className="text-lesnar-success font-bold">[i]</span> Fleet sync protocol re-established
-              </div>
+              {criticalDrones.length > 0 ? criticalDrones.map((drone) => (
+                <div key={drone.drone_id} className="text-[10px] font-mono text-white/70 py-2 border-b border-white/5 last:border-b-0">
+                  <span className="text-lesnar-danger font-bold">[!]</span> {drone.drone_id}: Low battery {Math.round(drone.battery || 0)}%
+                </div>
+              )) : (
+                <div className="text-[10px] font-mono text-white/70 py-2">
+                  <span className="text-lesnar-success font-bold">[i]</span> No critical alerts. Fleet stable.
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -261,8 +298,11 @@ const IntegrityBar = React.memo(function IntegrityBar({ label, value, color }) {
 });
 
 const DroneCard = React.memo(function DroneCard({ drone }) {
-  const isFlying = (drone.altitude || 0) > 1;
-  const isArmed = drone.armed;
+  const { altitude, speed, armed: isArmed, flying: isFlying, battery } = getDroneFlags(drone);
+  const isLowBattery = battery < 20;
+
+  const statusLabel = isLowBattery ? 'LOW POWER' : isFlying ? 'AIRBORNE' : isArmed ? 'ARMED' : 'STANDBY';
+  const statusColor = isLowBattery ? 'text-lesnar-danger' : isFlying ? 'text-lesnar-success' : isArmed ? 'text-lesnar-warning' : 'text-gray-400';
 
   return (
     <div className="card relative group hover:border-lesnar-accent/30 transition-all overflow-hidden border-white/5 bg-white/[0.02]">
@@ -277,25 +317,25 @@ const DroneCard = React.memo(function DroneCard({ drone }) {
           <span className="text-xs font-black text-white uppercase tracking-tighter">{drone.drone_id}</span>
         </div>
         <div className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10">
-          <span className="text-[7px] font-mono text-gray-500 uppercase tracking-widest">{drone.mode || 'STABILIZED'}</span>
+          <span className={`text-[7px] font-mono uppercase tracking-widest ${statusColor}`}>{statusLabel}</span>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
         <div className="space-y-1">
           <p className="text-[8px] font-mono text-gray-600 uppercase tracking-widest leading-none">Altitude</p>
-          <p className="text-sm font-mono text-white font-bold">{(drone.altitude || 0).toFixed(1)}<span className="text-[8px] ml-0.5 text-gray-500 font-normal">M</span></p>
+          <p className="text-sm font-mono text-white font-bold">{altitude.toFixed(1)}<span className="text-[8px] ml-0.5 text-gray-500 font-normal">M</span></p>
         </div>
         <div className="space-y-1">
           <p className="text-[8px] font-mono text-gray-600 uppercase tracking-widest leading-none">Velocity</p>
-          <p className="text-sm font-mono text-white font-bold">{(drone.speed || 0).toFixed(1)}<span className="text-[8px] ml-0.5 text-gray-500 font-normal">M/S</span></p>
+          <p className="text-sm font-mono text-white font-bold">{speed.toFixed(1)}<span className="text-[8px] ml-0.5 text-gray-500 font-normal">M/S</span></p>
         </div>
       </div>
 
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Zap className={`h-3 w-3 ${drone.battery < 20 ? 'text-lesnar-danger animate-bounce' : 'text-lesnar-success'}`} />
-          <span className="text-[11px] font-mono text-white font-bold">{Math.round(drone.battery || 0)}%</span>
+          <Zap className={`h-3 w-3 ${battery < 20 ? 'text-lesnar-danger animate-bounce' : 'text-lesnar-success'}`} />
+          <span className="text-[11px] font-mono text-white font-bold">{Math.round(battery)}%</span>
         </div>
         <div className="flex items-center space-x-3 text-gray-600">
           <div className="flex items-center">

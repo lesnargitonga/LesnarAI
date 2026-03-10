@@ -39,7 +39,7 @@ For targeted development, services can be launched independently via `bin/`:
 -   `start_frontend.bat`: React Dashboard (Port 3000).
 -   `start_simulation.bat`: Standalone drone physics engine.
 
-For the canonical stack, use `docker compose up -d --build` (backend/redis/db) and `npm start` (frontend), then run PX4/Gazebo + the teacher in WSL as described in the root README.
+For the canonical stack, use `python3 scripts/bootstrap_secure_deployment.py`, then `docker compose --env-file .env.secure up -d --build` (backend/redis/db) and `npm start` (frontend). Use session auth via `python3 scripts/request_session_token.py` for API checks, then run PX4/Gazebo + the teacher in WSL as described in the root README.
 
 ---
 

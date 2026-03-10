@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Home,
@@ -11,6 +11,9 @@ import {
   Zap,
   Activity
 } from 'lucide-react';
+import api from '../api';
+import { useDrones } from '../context/DroneContext';
+import { getDroneFlags } from '../utils/droneState';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: Home },
@@ -21,8 +24,44 @@ const navigation = [
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
-function Sidebar({ isOpen, onClose }) {
+function formatUptime(seconds) {
+  const total = Number(seconds) || 0;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = Math.floor(total % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function Sidebar({ isOpen, onClose, connected, linkMetrics }) {
   const location = useLocation();
+  const { drones } = useDrones();
+  const [health, setHealth] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadHealth = async () => {
+      try {
+        const res = await api.get('/api/health');
+        if (mounted) setHealth(res.data || null);
+      } catch {
+        if (mounted) setHealth(null);
+      }
+    };
+    loadHealth();
+    const timer = setInterval(loadHealth, 10000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const activeCount = useMemo(
+    () => drones.filter((drone) => getDroneFlags(drone).flying).length,
+    [drones]
+  );
+  const loadPercent = Math.max(0, Math.min(100, drones.length === 0 ? 0 : Math.round((activeCount / drones.length) * 100)));
+  const dbConnected = Boolean(health?.db_connected);
+  const uptime = formatUptime(health?.uptime_seconds || 0);
 
   return (
     <>
@@ -90,22 +129,30 @@ function Sidebar({ isOpen, onClose }) {
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10 glass">
             <div className="flex items-center mb-3">
               <div className="h-2 w-2 bg-lesnar-success rounded-full animate-pulse mr-2 shadow-[0_0_5px_rgba(0,255,148,0.8)]"></div>
-              <span className="text-[10px] font-mono text-lesnar-success uppercase tracking-widest">Core Active</span>
+                <span className={`text-[10px] font-mono uppercase tracking-widest ${connected ? 'text-lesnar-success' : 'text-lesnar-danger'}`}>
+                  {connected ? 'Core Active' : 'Link Severed'}
+                </span>
             </div>
 
             <div className="space-y-2">
               <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                <div className="h-full w-[85%] bg-lesnar-accent shadow-[0_0_5px_rgba(0,245,255,0.5)]"></div>
+                  <div
+                    className="h-full bg-lesnar-accent shadow-[0_0_5px_rgba(0,245,255,0.5)] transition-all"
+                    style={{ width: `${loadPercent}%` }}
+                  ></div>
               </div>
               <div className="flex justify-between text-[10px] font-mono text-gray-500 uppercase tracking-tighter">
                 <span>Load</span>
-                <span>85%</span>
+                  <span>{loadPercent}%</span>
               </div>
             </div>
 
             <div className="mt-4 pt-4 border-t border-white/5 flex items-center text-[10px] font-mono text-gray-600">
               <Activity className="h-3 w-3 mr-2 text-lesnar-accent" />
-              <span>UPTIME: 14:22:05</span>
+                <span>{`UPTIME: ${uptime} | DB: ${dbConnected ? 'OK' : 'FAIL'}`}</span>
+            </div>
+            <div className="mt-2 text-[10px] font-mono text-gray-500 uppercase tracking-tighter">
+              <span>{`LINK: ${linkMetrics?.linkMode?.label || 'UNKNOWN'} | RTT: ${linkMetrics?.latencyMs ?? '—'}ms`}</span>
             </div>
           </div>
         </div>

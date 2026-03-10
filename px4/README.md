@@ -1,37 +1,62 @@
-# PX4 Teacher Brain (SITL)
+# PX4 SITL + Gazebo Setup
 
-This folder outlines how to run PX4 SITL (Gazebo Harmonic) and collect teacher-driven demonstrations to train a student policy.
+This folder is a reference for PX4 SITL startup. The canonical data-collection and bridge script is `training/px4_teacher_collect_gz.py` (not the legacy `px4_teacher_collect.py`).
 
-## Prereqs
-- PX4-Autopilot installed (see `sentinel.config.json` paths if relevant)
-- Gazebo Harmonic world with a multirotor
-- QGroundControl for parameter changes
-- Python (Windows or WSL) with `mavsdk`
-- EKF2 GPS-denied config applied (see `../px4_config/gps_denied.params`)
+## Prerequisites
+- PX4-Autopilot cloned at `~/PX4-Autopilot`
+- Gazebo Harmonic installed
+- `obstacles.sdf` copied into PX4 worlds dir (one-time setup):
+  ```bash
+  cp ~/workspace/LesnarAI/obstacles.sdf ~/PX4-Autopilot/Tools/simulation/gz/worlds/obstacles.sdf
+  ```
+- WSL Python venv `.venv-wsl` with `mavsdk numpy redis async-timeout` installed
+- EKF2 GPS-denied config applied if needed (see `../px4_config/gps_denied.params`)
 
-## SITL Startup (WSL recommended)
+## SITL Startup (WSL — always use native WSL, not `/mnt/...`)
+
+```bash
+# Step 1: Start Gazebo FIRST and wait ~15s for world to load
+cd ~/workspace/LesnarAI
+gz sim -v4 -r obstacles.sdf
+
+# Step 2: In a new terminal, connect PX4 to the running Gazebo instance
+cd ~/PX4-Autopilot
+export PX4_GZ_MODEL="x500"
+export PX4_GZ_WORLD="obstacles"
+PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
 ```
-# In WSL Ubuntu
-git clone https://github.com/PX4/PX4-Autopilot
-cd PX4-Autopilot
-make px4_sitl gazebo
-# SITL exposes MAVLink on UDP:14540 by default
+
+Expected: `INFO [commander] Ready for takeoff!` and world `/world/obstacles` confirmed active.
+
+## Teacher Data Collection
+
+Use `training/px4_teacher_collect_gz.py` (current script — **not** the legacy `px4_teacher_collect.py`).
+
+```bash
+cd ~/workspace/LesnarAI
+source .venv-wsl/bin/activate
+mkdir -p dataset/px4_teacher logs
+python3 training/px4_teacher_collect_gz.py \
+  --duration 0 \
+  --mavsdk-server auto \
+  --hz 5 \
+  --alt 12 \
+  --base_speed 1.2 \
+  --max_speed 2.5
 ```
 
-## Teacher Demo Collection
-Use `training/px4_teacher_collect.py` to connect to SITL and record demonstrations.
-- Arms and takes off
-- Runs a simple teacher (waypoint-follow + obstacle-aware yaw bias if range available)
-- Logs telemetry and teacher actions to CSV
-
-Run:
+Verify data is recording:
+```bash
+wc -l dataset/px4_teacher/telemetry_*.csv
 ```
-# Windows PowerShell (ensure Python has mavsdk installed)
-Set-Location "D:\docs\lesnar\Lesnar AI"
-& .\.venv\Scripts\python.exe .\training\px4_teacher_collect.py --system 127.0.0.1:14540 --out .\dataset\px4_teacher --duration 180 --hz 10
+
+## Bridge-Only Mode (app-controlled, no autonomous flight)
+
+```bash
+python3 training/px4_teacher_collect_gz.py --duration 0 --mavsdk-server auto --bridge_only
 ```
 
 ## Notes
-- If you have rangefinder/obstacle sensors in Gazebo, the script biases yaw away from close obstacles.
-- For GPS-denied validation, ensure EKF2 optical flow + rangefinder is active.
-- Convert the CSV to your training format or adapt `train_navigation.py` to consume telemetry-based actions.
+- Always start Gazebo before PX4 (world needs time to load).
+- The obstacle world has 85 obstacles; the A* planner avoids them automatically in autonomous mode.
+- For GPS-denied validation, apply EKF2 optical flow + rangefinder params and verify with `ekf2 status` in MAVLink console.

@@ -5,7 +5,8 @@ set -e
 echo "=== Starting PX4 SITL with Obstacles World ==="
 
 # Paths
-PROJECT_DIR="$HOME/lesnar/LesnarAI"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORLD_FILE="$PROJECT_DIR/obstacles.sdf"
 PX4_DIR="$HOME/PX4-Autopilot"
 

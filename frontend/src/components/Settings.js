@@ -1,8 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import api from '../api';
-import { Save, RefreshCw, AlertTriangle, Shield, Zap, Globe, Cpu } from 'lucide-react';
+import api, { getApiErrorMessage } from '../api';
+import { Save, RefreshCw, AlertTriangle, Shield, Zap, Globe, Cpu, UserPlus, Trash2, Key, Users } from 'lucide-react';
+import { getOperatorIdentity } from '../utils/operatorAudit';
+import { readUiPreferences, writeUiPreferences } from '../utils/uiPreferences';
 
 function Settings() {
+  const isAdmin = getOperatorIdentity().role === 'admin';
+  const uiDefaults = readUiPreferences();
   const [settings, setSettings] = useState({
     maxAltitude: 120,
     maxSpeed: 15,
@@ -16,15 +20,79 @@ function Settings() {
     apiHost: window.location.hostname || 'localhost',
     apiPort: 5000,
     enableSSL: window.location.protocol === 'https:',
-    mapProvider: 'carto-dark',
-    defaultZoom: 12,
-    showFlightPaths: true,
-    enableNotifications: true
+    mapProvider: uiDefaults.mapProvider,
+    defaultZoom: uiDefaults.defaultZoom,
+    showFlightPaths: uiDefaults.showFlightPaths,
+    enableNotifications: uiDefaults.enableNotifications
   });
 
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // ---- User management (admin only) ----
+  const [users, setUsers] = useState([]);
+  const [userError, setUserError] = useState(null);
+  const [userSuccess, setUserSuccess] = useState(null);
+  const [newUser, setNewUser] = useState({ username: '', display_name: '', role: 'viewer', password: '' });
+  const [pwReset, setPwReset] = useState({ username: null, password: '' });
+  const [userLoading, setUserLoading] = useState(false);
+
+  const loadUsers = async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await api.get('/api/auth/users');
+      if (res.data?.success) setUsers(res.data.users || []);
+    } catch (e) { /* silently ignore */ }
+  };
+
+  const flashUserMsg = (msg, isError = false) => {
+    if (isError) { setUserError(msg); setTimeout(() => setUserError(null), 4000); }
+    else { setUserSuccess(msg); setTimeout(() => setUserSuccess(null), 3000); }
+  };
+
+  const handleCreateUser = async () => {
+    setUserLoading(true);
+    try {
+      const res = await api.post('/api/auth/users', newUser);
+      if (res.data?.success) {
+        flashUserMsg(`User "${newUser.username}" created.`);
+        setNewUser({ username: '', display_name: '', role: 'viewer', password: '' });
+        loadUsers();
+      }
+    } catch (e) { flashUserMsg(getApiErrorMessage(e, 'Failed to create user'), true); }
+    finally { setUserLoading(false); }
+  };
+
+  const handleRoleChange = async (username, role) => {
+    try {
+      await api.put(`/api/auth/users/${username}`, { role });
+      flashUserMsg(`Role updated for "${username}".`);
+      loadUsers();
+    } catch (e) { flashUserMsg(getApiErrorMessage(e, 'Failed to update role'), true); }
+  };
+
+  const handlePasswordReset = async () => {
+    if (!pwReset.username || pwReset.password.length < 8) {
+      flashUserMsg('Password must be at least 8 characters.', true); return;
+    }
+    setUserLoading(true);
+    try {
+      await api.put(`/api/auth/users/${pwReset.username}`, { password: pwReset.password });
+      flashUserMsg(`Password reset for "${pwReset.username}". All sessions revoked.`);
+      setPwReset({ username: null, password: '' });
+    } catch (e) { flashUserMsg(getApiErrorMessage(e, 'Failed to reset password'), true); }
+    finally { setUserLoading(false); }
+  };
+
+  const handleDeleteUser = async (username) => {
+    if (!window.confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/api/auth/users/${username}`);
+      flashUserMsg(`User "${username}" deleted.`);
+      loadUsers();
+    } catch (e) { flashUserMsg(getApiErrorMessage(e, 'Failed to delete user'), true); }
+  };
 
   const mapConfigToSettings = (cfg) => {
     const drone = (cfg || {}).drone_settings || {};
@@ -56,7 +124,7 @@ function Settings() {
       max_altitude: Number(ui.maxAltitude),
       battery_warning_level: Number(ui.batteryWarningLevel),
       battery_critical_level: Number(ui.batteryCriticalLevel),
-      auto_land_battery: Number(ui.auto_land_battery),
+      auto_land_battery: Number(ui.autoLandBattery),
     };
     cfg.simulation_settings = {
       ...(cfg.simulation_settings || {}),
@@ -84,15 +152,16 @@ function Settings() {
       try {
         const res = await api.get('/api/config');
         if (res.data?.success && res.data.config) {
-          setSettings(prev => mapConfigToSettings(res.data.config));
+          setSettings(prev => ({ ...mapConfigToSettings(res.data.config), ...readUiPreferences() }));
         }
       } catch (e) {
-        setError('Config_Sync_Error: Backend bridge unreachable');
+        setError(getApiErrorMessage(e, 'Unable to load system settings right now.'));
       } finally {
         setLoading(false);
       }
     };
     loadConfig();
+    loadUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -108,11 +177,17 @@ function Settings() {
       const merged = mapSettingsToConfig(current.data?.config || {}, settings);
       const res = await api.post('/api/config', { config: merged });
       if (res.data?.success) {
+        writeUiPreferences({
+          mapProvider: settings.mapProvider,
+          defaultZoom: settings.defaultZoom,
+          showFlightPaths: settings.showFlightPaths,
+          enableNotifications: settings.enableNotifications,
+        });
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
       }
     } catch (e) {
-      setError('Uplink_Failure: Calibration data rejected');
+      setError(getApiErrorMessage(e, 'Unable to save settings right now.'));
     } finally {
       setLoading(false);
     }
@@ -124,7 +199,7 @@ function Settings() {
       <div className="flex flex-col md:flex-row md:items-end justify-between border-l-2 border-lesnar-accent pl-6 py-2">
         <div>
           <h1 className="text-3xl font-black text-white uppercase tracking-tighter">
-            System Config <span className="text-lesnar-accent">// CALIBRATION</span>
+            System Config <span className="text-lesnar-accent">CALIBRATION</span>
           </h1>
           <p className="text-xs font-mono text-gray-500 uppercase tracking-widest mt-1">
             Global Parameters & Operational Protocols
@@ -136,15 +211,38 @@ function Settings() {
             <RefreshCw className="h-5 w-5" />
           </button>
           <button
+            onClick={() => {
+              writeUiPreferences({
+                mapProvider: settings.mapProvider,
+                defaultZoom: settings.defaultZoom,
+                showFlightPaths: settings.showFlightPaths,
+                enableNotifications: settings.enableNotifications,
+              });
+              setSaved(true);
+              setTimeout(() => setSaved(false), 3000);
+            }}
+            className="p-2.5 rounded-xl border border-white/10 hover:bg-white/5 transition-colors text-gray-400"
+            title="Save interface preferences locally"
+          >
+            <Shield className="h-5 w-5" />
+          </button>
+          <button
             onClick={handleSave}
-            disabled={loading}
+            disabled={loading || !isAdmin}
             className={`btn-primary flex items-center px-6 ${loading ? 'opacity-50' : ''}`}
           >
             <Save className="h-4 w-4 mr-2" />
-            {loading ? 'SYNCING...' : 'COMMIT CHANGES'}
+            {loading ? 'SYNCING...' : !isAdmin ? 'ADMIN REQUIRED' : 'COMMIT CHANGES'}
           </button>
         </div>
       </div>
+
+      {!isAdmin && (
+        <div className="bg-lesnar-warning/10 border border-lesnar-warning/30 rounded-2xl p-4 flex items-center space-x-3 slide-down">
+          <AlertTriangle className="h-5 w-5 text-lesnar-warning" />
+          <p className="text-sm font-mono text-lesnar-warning uppercase font-bold tracking-widest">Viewer/Operator mode: settings are read-only</p>
+        </div>
+      )}
 
       {saved && (
         <div className="bg-lesnar-success/10 border border-lesnar-success/30 rounded-2xl p-4 flex items-center space-x-3 slide-down">
@@ -230,6 +328,162 @@ function Settings() {
           </div>
         </div>
       </div>
+
+      {/* User Management — admin only */}
+      {isAdmin && (
+        <div className="card">
+          <div className="flex items-center space-x-3 mb-8">
+            <div className="p-2 rounded-lg bg-lesnar-accent/10 border border-lesnar-accent/20">
+              <Users className="h-4 w-4 text-lesnar-accent" />
+            </div>
+            <h3 className="text-sm font-black text-white uppercase tracking-widest">Operator Access Control</h3>
+            <button onClick={loadUsers} className="ml-auto p-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors text-gray-400" title="Refresh user list">
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {userError && (
+            <div className="mb-4 bg-lesnar-danger/10 border border-lesnar-danger/30 rounded-xl p-3 flex items-center space-x-2">
+              <AlertTriangle className="h-4 w-4 text-lesnar-danger flex-shrink-0" />
+              <p className="text-xs font-mono text-lesnar-danger">{userError}</p>
+            </div>
+          )}
+          {userSuccess && (
+            <div className="mb-4 bg-lesnar-success/10 border border-lesnar-success/30 rounded-xl p-3 flex items-center space-x-2">
+              <Shield className="h-4 w-4 text-lesnar-success flex-shrink-0" />
+              <p className="text-xs font-mono text-lesnar-success">{userSuccess}</p>
+            </div>
+          )}
+
+          {/* Existing users table */}
+          <div className="overflow-x-auto mb-8">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="border-b border-white/5">
+                  <th className="text-left py-2 px-3 text-gray-500 uppercase tracking-widest font-bold">Username</th>
+                  <th className="text-left py-2 px-3 text-gray-500 uppercase tracking-widest font-bold">Display Name</th>
+                  <th className="text-left py-2 px-3 text-gray-500 uppercase tracking-widest font-bold">Role</th>
+                  <th className="text-left py-2 px-3 text-gray-500 uppercase tracking-widest font-bold">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.username} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                    <td className="py-2.5 px-3 text-white">{u.username}</td>
+                    <td className="py-2.5 px-3 text-gray-400">{u.display_name}</td>
+                    <td className="py-2.5 px-3">
+                      <select
+                        value={u.role}
+                        onChange={(e) => handleRoleChange(u.username, e.target.value)}
+                        className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xs font-mono text-white focus:outline-none focus:border-lesnar-accent/50 transition-all"
+                      >
+                        <option value="viewer">viewer</option>
+                        <option value="operator">operator</option>
+                        <option value="admin">admin</option>
+                      </select>
+                    </td>
+                    <td className="py-2.5 px-3 flex items-center space-x-2">
+                      <button
+                        onClick={() => setPwReset({ username: u.username, password: '' })}
+                        className="p-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors text-gray-400 hover:text-lesnar-accent"
+                        title="Reset password"
+                      >
+                        <Key className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteUser(u.username)}
+                        className="p-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors text-gray-400 hover:text-lesnar-danger"
+                        title="Delete user"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {users.length === 0 && (
+                  <tr><td colSpan={4} className="py-4 px-3 text-gray-600 text-center">No users loaded</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Password reset inline form */}
+          {pwReset.username && (
+            <div className="mb-6 p-4 bg-black/30 border border-lesnar-warning/20 rounded-xl space-y-3">
+              <p className="text-[10px] font-mono text-lesnar-warning uppercase tracking-widest font-bold">
+                Reset password for: {pwReset.username}
+              </p>
+              <div className="flex space-x-3">
+                <input
+                  type="password"
+                  placeholder="New password (min 8 chars)"
+                  value={pwReset.password}
+                  onChange={e => setPwReset(p => ({ ...p, password: e.target.value }))}
+                  className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm font-mono text-white focus:outline-none focus:border-lesnar-accent/50 transition-all"
+                />
+                <button
+                  onClick={handlePasswordReset}
+                  disabled={userLoading}
+                  className="btn-primary px-4 text-xs disabled:opacity-50"
+                >
+                  <Key className="h-3.5 w-3.5 mr-1.5 inline" />RESET
+                </button>
+                <button
+                  onClick={() => setPwReset({ username: null, password: '' })}
+                  className="px-3 py-2 rounded-xl border border-white/10 hover:bg-white/5 text-gray-400 text-xs"
+                >
+                  CANCEL
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Add new user form */}
+          <div className="border-t border-white/5 pt-6">
+            <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest font-bold mb-4">Add New Operator</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <input
+                type="text"
+                placeholder="Username"
+                value={newUser.username}
+                onChange={e => setNewUser(p => ({ ...p, username: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') }))}
+                className="bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm font-mono text-white focus:outline-none focus:border-lesnar-accent/50 transition-all"
+              />
+              <input
+                type="text"
+                placeholder="Display Name"
+                value={newUser.display_name}
+                onChange={e => setNewUser(p => ({ ...p, display_name: e.target.value }))}
+                className="bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm font-mono text-white focus:outline-none focus:border-lesnar-accent/50 transition-all"
+              />
+              <select
+                value={newUser.role}
+                onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}
+                className="bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm font-mono text-white focus:outline-none focus:border-lesnar-accent/50 transition-all"
+              >
+                <option value="viewer">viewer</option>
+                <option value="operator">operator</option>
+                <option value="admin">admin</option>
+              </select>
+              <input
+                type="password"
+                placeholder="Password (min 8 chars)"
+                value={newUser.password}
+                onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))}
+                className="bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm font-mono text-white focus:outline-none focus:border-lesnar-accent/50 transition-all"
+              />
+            </div>
+            <button
+              onClick={handleCreateUser}
+              disabled={userLoading || !newUser.username || !newUser.password}
+              className="btn-primary flex items-center px-6 disabled:opacity-50"
+            >
+              <UserPlus className="h-4 w-4 mr-2" />
+              {userLoading ? 'CREATING...' : 'ADD OPERATOR'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

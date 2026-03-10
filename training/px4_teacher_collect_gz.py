@@ -1,12 +1,15 @@
 import asyncio
 import argparse
+import atexit
 import csv
+import fcntl
 import json
 import math
 import os
 import time
 import heapq
 from collections import deque
+from statistics import mean
 import numpy as np
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -29,6 +32,8 @@ except Exception:
     VelocityNedYaw = None
 
 LOG_PATH = "teacher_runtime.log"
+LOCK_PATH = "/tmp/lesnar_px4_teacher_collect_gz.lock"
+_LOCK_HANDLE = None
 
 def log(msg: str) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -41,6 +46,181 @@ def log(msg: str) -> None:
         pass
 
 log("Teacher script started")
+
+
+def acquire_single_instance_lock() -> None:
+    global _LOCK_HANDLE
+    _LOCK_HANDLE = open(LOCK_PATH, "w", encoding="utf-8")
+    try:
+        fcntl.flock(_LOCK_HANDLE, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        raise RuntimeError("Another px4_teacher_collect_gz.py instance is already running") from exc
+    _LOCK_HANDLE.write(str(os.getpid()))
+    _LOCK_HANDLE.flush()
+
+    def _cleanup_lock():
+        global _LOCK_HANDLE
+        try:
+            if _LOCK_HANDLE is not None:
+                fcntl.flock(_LOCK_HANDLE, fcntl.LOCK_UN)
+                _LOCK_HANDLE.close()
+        except Exception:
+            pass
+        _LOCK_HANDLE = None
+
+    atexit.register(_cleanup_lock)
+
+
+def analyze_telemetry_csv(csv_path: str, report_path: str | None = None) -> dict:
+    rows = []
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(row)
+    except Exception as exc:
+        log(f"Auto-analysis failed to read telemetry CSV: {exc}")
+        return {}
+
+    if len(rows) < 5:
+        log("Auto-analysis skipped: not enough telemetry rows.")
+        return {}
+
+    def getf(row: dict, key: str, default: float = 0.0) -> float:
+        try:
+            return float(row.get(key, default))
+        except Exception:
+            return default
+
+    ts = [getf(r, "timestamp", 0.0) for r in rows]
+    duration_s = max(0.0, ts[-1] - ts[0]) if len(ts) > 1 else 0.0
+    sample_rate_hz = (len(rows) / duration_s) if duration_s > 1e-6 else 0.0
+
+    speeds = []
+    cmd_speeds = []
+    progresses = []
+    front_clears = []
+    xtracks = []
+    heading_err_abs = []
+
+    for row in rows:
+        vx = getf(row, "vx")
+        vy = getf(row, "vy")
+        vz = getf(row, "vz")
+        cvx = getf(row, "cmd_vx")
+        cvy = getf(row, "cmd_vy")
+        speeds.append(math.sqrt(vx * vx + vy * vy + vz * vz))
+        cmd_speeds.append(math.sqrt(cvx * cvx + cvy * cvy))
+        progresses.append(getf(row, "progress_mps"))
+        front_clears.append(getf(row, "front_lidar_min", getf(row, "lidar_min", 20.0)))
+        xtracks.append(abs(getf(row, "cross_track_m")))
+        heading_err_abs.append(abs(getf(row, "heading_error_deg")))
+
+    low_speed_pct = 100.0 * sum(1 for s in speeds if s < 0.2) / len(speeds)
+    low_progress_pct = 100.0 * sum(1 for p in progresses if p < 0.15) / len(progresses)
+    front_zero_pct = 100.0 * sum(1 for d in front_clears if d <= 0.05) / len(front_clears)
+    cmd_zero_pct = 100.0 * sum(1 for s in cmd_speeds if s <= 0.05) / len(cmd_speeds)
+
+    segments = []
+    start = None
+    for index, value in enumerate(speeds):
+        if value < 0.2 and start is None:
+            start = index
+        if value >= 0.2 and start is not None:
+            segments.append((start, index - 1))
+            start = None
+    if start is not None:
+        segments.append((start, len(speeds) - 1))
+
+    long_low_speed_segments = []
+    for start, end in segments:
+        if end > start and (ts[end] - ts[start]) >= 2.0:
+            long_low_speed_segments.append(
+                {
+                    "t_start_s": round(ts[start] - ts[0], 2),
+                    "t_end_s": round(ts[end] - ts[0], 2),
+                    "duration_s": round(ts[end] - ts[start], 2),
+                }
+            )
+
+    abrupt_stops = []
+    for i in range(1, len(speeds)):
+        dt = ts[i] - ts[i - 1]
+        if dt <= 1.0 and (speeds[i - 1] - speeds[i]) > 2.0:
+            abrupt_stops.append(
+                {
+                    "t_s": round(ts[i] - ts[0], 2),
+                    "speed_before": round(speeds[i - 1], 3),
+                    "speed_after": round(speeds[i], 3),
+                    "front_lidar_min": round(front_clears[i], 3),
+                    "progress_mps": round(progresses[i], 3),
+                }
+            )
+
+    diagnosis = []
+    if front_zero_pct > 30.0 and low_speed_pct > 60.0 and cmd_zero_pct > 60.0:
+        diagnosis.append(
+            "Protective hold likely dominated the run: front clearance stayed near zero and commanded velocity stayed near zero."
+        )
+    if mean(heading_err_abs) > 25.0:
+        diagnosis.append(
+            "High average heading error: consider reducing yaw aggression or increasing turn grace before low-progress penalties."
+        )
+    if mean(xtracks) > 3.0:
+        diagnosis.append(
+            "Cross-track error is high: route-tracking gains or lookahead distance need refinement."
+        )
+    if not diagnosis:
+        diagnosis.append("No dominant failure signature detected; run appears nominal or mixed.")
+
+    report = {
+        "file": str(csv_path),
+        "rows": len(rows),
+        "duration_s": round(duration_s, 3),
+        "sample_rate_hz": round(sample_rate_hz, 3),
+        "metrics": {
+            "speed_avg_mps": round(mean(speeds), 3),
+            "speed_max_mps": round(max(speeds), 3),
+            "progress_avg_mps": round(mean(progresses), 3),
+            "progress_min_mps": round(min(progresses), 3),
+            "front_clear_avg_m": round(mean(front_clears), 3),
+            "front_clear_min_m": round(min(front_clears), 3),
+            "xtrack_avg_m": round(mean(xtracks), 3),
+            "xtrack_max_m": round(max(xtracks), 3),
+            "heading_err_avg_deg": round(mean(heading_err_abs), 3),
+            "heading_err_max_deg": round(max(heading_err_abs), 3),
+            "low_speed_pct": round(low_speed_pct, 2),
+            "low_progress_pct": round(low_progress_pct, 2),
+            "front_zero_pct": round(front_zero_pct, 2),
+            "cmd_zero_pct": round(cmd_zero_pct, 2),
+        },
+        "events": {
+            "long_low_speed_segments": long_low_speed_segments,
+            "abrupt_stops": abrupt_stops,
+        },
+        "diagnosis": diagnosis,
+    }
+
+    if report_path:
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2)
+            log(f"Auto-analysis report written: {report_path}")
+        except Exception as exc:
+            log(f"Auto-analysis report write failed: {exc}")
+
+    log(
+        "Auto-analysis summary | "
+        f"duration={report['duration_s']:.1f}s rows={report['rows']} "
+        f"speed_avg={report['metrics']['speed_avg_mps']:.2f}mps "
+        f"progress_avg={report['metrics']['progress_avg_mps']:.2f}mps "
+        f"low_speed={report['metrics']['low_speed_pct']:.1f}% "
+        f"front_zero={report['metrics']['front_zero_pct']:.1f}%"
+    )
+    for item in diagnosis:
+        log(f"Auto-analysis diagnosis: {item}")
+
+    return report
 
 """
 GOD-MODE TEACHER COLLECTOR
@@ -376,6 +556,29 @@ class DroneState:
         self.vy = 0.0
         self.vz = 0.0
         self.yaw = 0.0
+        self.roll = 0.0
+        self.pitch = 0.0
+        self.armed = False
+        self.in_air = False
+        self.mode = "UNKNOWN"
+
+
+async def apply_demo_px4_params(drone) -> None:
+    """Best-effort PX4 parameter tuning for SITL/app-control demos."""
+    candidates = [
+        ("COM_ARM_WO_GPS", 1, "int"),
+        ("COM_DISARM_PRFLT", 60.0, "float"),
+        ("COM_PREARM_MODE", 0, "int"),
+    ]
+    for name, value, kind in candidates:
+        try:
+            if kind == "int":
+                await drone.param.set_param_int(name, int(value))
+            else:
+                await drone.param.set_param_float(name, float(value))
+            log(f"--> PX4 param applied: {name}={value}")
+        except Exception as exc:
+            log(f"!! PX4 param skipped ({name}): {exc}")
 
 
 # --- LISTENERS ---
@@ -406,6 +609,62 @@ async def local_pos_listener(drone, state):
 async def att_listener(drone, state):
     async for angle in drone.telemetry.heading():
         state.yaw = angle.heading_deg
+
+
+async def att_euler_listener(drone, state):
+    try:
+        async for euler in drone.telemetry.attitude_euler():
+            state.roll = float(euler.roll_deg)
+            state.pitch = float(euler.pitch_deg)
+    except Exception:
+        # Keep running without Euler telemetry if not available on this platform.
+        pass
+
+
+async def armed_listener(drone, state):
+    try:
+        async for armed in drone.telemetry.armed():
+            state.armed = bool(armed)
+    except Exception:
+        pass
+
+
+async def in_air_listener(drone, state):
+    try:
+        async for in_air in drone.telemetry.in_air():
+            state.in_air = bool(in_air)
+    except Exception:
+        pass
+
+
+async def flight_mode_listener(drone, state):
+    try:
+        async for mode in drone.telemetry.flight_mode():
+            state.mode = str(mode)
+    except Exception:
+        pass
+
+
+async def redis_telemetry_pump(redis_client, state, drone_id: str):
+    while True:
+        telemetry_data = {
+            "drone_id": drone_id,
+            "latitude": state.lat,
+            "longitude": state.lon,
+            "altitude": state.rel_alt,
+            "heading": state.yaw,
+            "speed": math.sqrt(state.vx**2 + state.vy**2),
+            "battery": 99.0,
+            "armed": state.armed,
+            "in_air": state.in_air,
+            "mode": state.mode or "TEACHER_BRIDGE",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            await redis_client.publish('telemetry', json.dumps(telemetry_data))
+        except Exception:
+            pass
+        await asyncio.sleep(0.25)
 
 
 # --- MAIN (ONLINE) ---
@@ -472,20 +731,29 @@ async def collect_data(args):
         log(f"!! connection_state failed: {e}")
         raise
 
+    await apply_demo_px4_params(drone)
+
     dstate = DroneState()
     asyncio.create_task(telemetry_listener(drone, dstate))
     asyncio.create_task(local_pos_listener(drone, dstate))
     asyncio.create_task(att_listener(drone, dstate))
+    asyncio.create_task(att_euler_listener(drone, dstate))
+    asyncio.create_task(armed_listener(drone, dstate))
+    asyncio.create_task(in_air_listener(drone, dstate))
+    asyncio.create_task(flight_mode_listener(drone, dstate))
+    if redis_client:
+        asyncio.create_task(redis_telemetry_pump(redis_client, dstate, args.drone_id))
 
-    await asyncio.sleep(2)
-    print("--> Arming...")
-    try:
-        await drone.action.arm()
-        await drone.action.set_takeoff_altitude(args.alt)
-        await drone.action.takeoff()
-        await asyncio.sleep(8)
-    except Exception as e:
-        print(f"Arm/Takeoff failed: {e}")
+    if not args.bridge_only:
+        await asyncio.sleep(2)
+        print("--> Arming...")
+        try:
+            await drone.action.arm()
+            await drone.action.set_takeoff_altitude(args.alt)
+            await drone.action.takeoff()
+            await asyncio.sleep(8)
+        except Exception as e:
+            print(f"Arm/Takeoff failed: {e}")
 
     # Prefer local NED position (stable in SITL) over GPS-derived xy.
     # Wait briefly until local position starts updating.
@@ -496,21 +764,57 @@ async def collect_data(args):
     def get_local_pos():
         return ned_to_map_xy(dstate.x, dstate.y)
 
-    print("--> Starting A* Pathfinding (ONLINE)...")
-    try:
-        # PX4 offboard best practice: stream setpoints before starting offboard.
+    offboard_active = False
+
+    async def ensure_offboard_started():
+        nonlocal offboard_active
         warmup_hz = max(5.0, float(args.hz))
-        warmup_count = int(warmup_hz * 1.0)
-        for _ in range(warmup_count):
-            await drone.offboard.set_velocity_ned(VelocityNedYaw(0.0, 0.0, 0.0, dstate.yaw))
-            await asyncio.sleep(1.0 / warmup_hz)
-        await drone.offboard.start()
-    except OffboardError as e:
-        print(e)
-        return
+
+        async def _warmup(duration_s: float):
+            warmup_count = int(warmup_hz * duration_s)
+            for _ in range(max(1, warmup_count)):
+                await drone.offboard.set_velocity_ned(VelocityNedYaw(0.0, 0.0, 0.0, dstate.yaw))
+                await asyncio.sleep(1.0 / warmup_hz)
+
+        await _warmup(1.0)
+        try:
+            await drone.offboard.start()
+        except OffboardError as e:
+            text = str(e).lower()
+            if 'already started' in text:
+                offboard_active = True
+                return
+            if 'no setpoint set' in text:
+                await _warmup(2.0)
+                await drone.offboard.start()
+            else:
+                raise
+        offboard_active = True
+
+    if args.bridge_only:
+        print("--> Control bridge mode active; awaiting app commands...")
+    else:
+        print("--> Starting A* Pathfinding (ONLINE)...")
+        try:
+            await ensure_offboard_started()
+        except OffboardError as e:
+            log(f"!! Initial offboard start failed (continuing without offboard): {e}")
+            offboard_active = False
+
+    takeoff_target_alt = None
 
     f = open(args.out, "w", newline="", encoding="utf-8")
     writer = csv.writer(f)
+
+    # Segmentation log: lidar-derived obstacle detections surfaced in the app's Analytics feed
+    _seg_log_dir = Path("logs")
+    _seg_log_dir.mkdir(parents=True, exist_ok=True)
+    _seg_log_date = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    seg_log_f = open(_seg_log_dir / f"seg_diag_{_seg_log_date}.csv", "w", newline="", encoding="utf-8")
+    seg_log_writer = csv.writer(seg_log_f)
+    seg_log_writer.writerow(["drone_id", "detected_class", "confidence", "timestamp"])
+    seg_log_f.flush()
+
     header = [
         "timestamp",
         "lat",
@@ -541,6 +845,7 @@ async def collect_data(args):
 
     start_time = time.time()
     last_step = time.time()
+    run_forever = float(args.duration) <= 0.0
 
     # Command smoothing / limits (stability)
     prev_vx_cmd = 0.0
@@ -562,11 +867,24 @@ async def collect_data(args):
     current_path = []
     path_index = 0
     goal_x, goal_y = 0, 0
+    external_mission = None
     recent_goals = deque(maxlen=5)
 
-    # Anti-loiter watchdog
+    # Anti-loiter watchdog (strike-based to avoid false replans while turning/braking)
     last_progress_check = time.time()
     progress_anchor = (0.0, 0.0)
+    low_progress_strikes = 0
+    heading_stall_strikes = 0
+    last_heading_err_abs = 0.0
+    last_front_min_dist = 20.0
+    last_geom_clearance_m = 20.0
+    front_min_filtered = 20.0
+    front_blocked_since = None
+    goal_set_at = time.time()
+    last_replan_at = 0.0
+    unstable_since = None
+    recovery_until = 0.0
+    last_recovery_log = 0.0
 
     def pick_new_goal():
         curr_x, curr_y = get_local_pos()
@@ -606,14 +924,45 @@ async def collect_data(args):
                     recent_goals.append((wx, wy))
                     return wx, wy
 
-    goal_x, goal_y = pick_new_goal()
-    progress_anchor = get_local_pos()
-    print(f"First Goal: {goal_x:.1f}, {goal_y:.1f}")
+    def set_goal_from_global(target_lat: float, target_lon: float):
+        nonlocal goal_x, goal_y, goal_set_at, current_path, path_index
+        lat0, lon0 = dstate.lat, dstate.lon
+        cur_map_x, cur_map_y = get_local_pos()
+        d_lat = target_lat - lat0
+        d_lon = target_lon - lon0
+        d_north = d_lat * 111319.0
+        d_east = d_lon * 111319.0 * math.cos(math.radians(lat0))
+        d_map_x, d_map_y = ned_to_map_xy(d_north, d_east)
+        goal_x, goal_y = cur_map_x + d_map_x, cur_map_y + d_map_y
+        goal_set_at = time.time()
+        current_path = []
+        path_index = 0
+
+    def stop_external_mission(log_message: str | None = None):
+        nonlocal external_mission, current_path, path_index, goal_x, goal_y, goal_set_at
+        external_mission = None
+        px_now, py_now = get_local_pos()
+        goal_x, goal_y = px_now, py_now
+        goal_set_at = time.time()
+        current_path = [(px_now, py_now)]
+        path_index = 0
+        if log_message:
+            log(log_message)
+
+    if args.bridge_only:
+        goal_x, goal_y = get_local_pos()
+        goal_set_at = time.time()
+        progress_anchor = get_local_pos()
+    else:
+        goal_x, goal_y = pick_new_goal()
+        goal_set_at = time.time()
+        progress_anchor = get_local_pos()
+        print(f"First Goal: {goal_x:.1f}, {goal_y:.1f}")
 
     try:
         while True:
             elapsed = time.time() - start_time
-            if elapsed > args.duration:
+            if (not run_forever) and (elapsed > float(args.duration)):
                 break
 
             now = time.time()
@@ -626,29 +975,74 @@ async def collect_data(args):
 
             px, py = get_local_pos()
 
-            # If not making meaningful progress, force a replan/new mission goal.
-            if now - last_progress_check > 8.0:
+            if (
+                args.bridge_only
+                and external_mission
+                and external_mission.get("status") == "ACTIVE"
+                and external_mission.get("await_takeoff_alt") is not None
+            ):
+                target_alt = float(external_mission.get("await_takeoff_alt") or 0.0)
+                if dstate.in_air or dstate.rel_alt >= max(1.0, target_alt - 0.7):
+                    try:
+                        if not offboard_active:
+                            await ensure_offboard_started()
+                    except Exception as mission_offboard_exc:
+                        log(f"!! Mission offboard start warning: {mission_offboard_exc}")
+                    wp = external_mission["waypoints"][external_mission["current_idx"]]
+                    set_goal_from_global(float(wp[0]), float(wp[1]))
+                    external_mission["await_takeoff_alt"] = None
+                    log(f"--> External mission navigation engaged for waypoint {external_mission['current_idx'] + 1}")
+
+            # If not making meaningful progress, consider replanning using guarded strike logic.
+            if (not args.bridge_only) and now - last_progress_check > float(args.progress_window_sec):
                 moved = math.sqrt((px - progress_anchor[0]) ** 2 + (py - progress_anchor[1]) ** 2)
-                if moved < 4.0:
-                    print("Low progress detected -> replanning with a new goal")
-                    goal_x, goal_y = pick_new_goal()
-                    current_path = []
+                in_goal_grace = (now - goal_set_at) < float(args.goal_grace_sec)
+                turning_in_place = last_heading_err_abs > float(args.replan_heading_hold_deg)
+                obstacle_braking = (last_front_min_dist < (hard_stop_dist + 0.5)) or (
+                    last_geom_clearance_m < (hard_stop_dist + 0.7)
+                )
+
+                if moved < float(args.min_progress_m) and not in_goal_grace and not turning_in_place and not obstacle_braking:
+                    low_progress_strikes += 1
+                    log(
+                        "Low progress strike "
+                        f"{low_progress_strikes}/{int(args.replan_strikes)} "
+                        f"(moved={moved:.2f}m, head_err={last_heading_err_abs:.1f}deg, "
+                        f"front={last_front_min_dist:.2f}m, geom={last_geom_clearance_m:.2f}m)"
+                    )
+                else:
+                    low_progress_strikes = 0
+
+                if low_progress_strikes >= int(args.replan_strikes):
+                    if (now - last_replan_at) >= float(args.replan_cooldown_sec):
+                        print("Low progress persisted -> replanning with a new goal")
+                        goal_x, goal_y = pick_new_goal()
+                        goal_set_at = time.time()
+                        last_replan_at = now
+                        current_path = []
+                        low_progress_strikes = 0
                 progress_anchor = (px, py)
                 last_progress_check = now
 
             if not current_path or path_index >= len(current_path):
-                print(f"Planning A* to {goal_x:.0f},{goal_y:.0f}...")
-                path = astar(grid, (px, py), (goal_x, goal_y))
-                if not path:
-                    print("Path failed! Picking new goal.")
-                    goal_x, goal_y = pick_new_goal()
-                    continue
+                if args.bridge_only and takeoff_target_alt is None and not (external_mission and external_mission.get("status") == "ACTIVE"):
+                    goal_x, goal_y = px, py
+                    current_path = [(px, py)]
+                    path_index = 0
+                else:
+                    print(f"Planning A* to {goal_x:.0f},{goal_y:.0f}...")
+                    path = astar(grid, (px, py), (goal_x, goal_y))
+                    if not path:
+                        print("Path failed! Picking new goal.")
+                        goal_x, goal_y = pick_new_goal()
+                        goal_set_at = time.time()
+                        continue
 
-                # Downsample less aggressively for smoother guidance.
-                stride = 2 if args.precision_mode else 3
-                current_path = path[::stride] + [path[-1]]
-                path_index = 0
-                print(f"Path found! {len(current_path)} waypoints")
+                    # Downsample less aggressively for smoother guidance.
+                    stride = 2 if args.precision_mode else 3
+                    current_path = path[::stride] + [path[-1]]
+                    path_index = 0
+                    print(f"Path found! {len(current_path)} waypoints")
 
             speed_now = math.sqrt(dstate.vx * dstate.vx + dstate.vy * dstate.vy)
             if args.precision_mode:
@@ -666,9 +1060,24 @@ async def collect_data(args):
                     break
 
                 if i == len(current_path) - 1 and d < 2.0:
-                    print("Goal Reached! New Goal...")
-                    goal_x, goal_y = pick_new_goal()
-                    current_path = []
+                    if args.bridge_only:
+                        if external_mission and external_mission.get("status") == "ACTIVE":
+                            if external_mission["current_idx"] + 1 < len(external_mission["waypoints"]):
+                                external_mission["current_idx"] += 1
+                                wp = external_mission["waypoints"][external_mission["current_idx"]]
+                                set_goal_from_global(float(wp[0]), float(wp[1]))
+                                log(f"--> External mission advanced to waypoint {external_mission['current_idx'] + 1}/{len(external_mission['waypoints'])}")
+                            else:
+                                stop_external_mission("--> External mission completed")
+                        else:
+                            current_path = [(px, py)]
+                            path_index = 0
+                            goal_x, goal_y = px, py
+                    else:
+                        print("Goal Reached! New Goal...")
+                        goal_x, goal_y = pick_new_goal()
+                        goal_set_at = time.time()
+                        current_path = []
                     break
 
             if not current_path:
@@ -702,13 +1111,21 @@ async def collect_data(args):
             sim_lidar = world_map.simulate_lidar(px, py, dstate.rel_alt, map_yaw_deg)
             min_dist = float(np.min(sim_lidar))
 
+            map_vx_now, map_vy_now = ned_to_map_xy(dstate.vx, dstate.vy)
+            yaw_rad_now = math.radians(map_yaw_deg)
+            c_now = math.cos(yaw_rad_now)
+            s_now = math.sin(yaw_rad_now)
+            v_forward_now = (map_vx_now * c_now) + (map_vy_now * s_now)
+            v_lateral_now = (-map_vx_now * s_now) + (map_vy_now * c_now)
+            sideslip_now_deg = math.degrees(math.atan2(v_lateral_now, max(0.3, abs(v_forward_now))))
+
             num_rays = len(sim_lidar)
             front_center = num_rays // 2
             front_half_window = max(2, int(round(num_rays * max(5.0, float(args.obstacle_sector_deg / 2.0)) / 360.0)))
             front_slice = sim_lidar[
                 max(0, front_center - front_half_window) : min(num_rays, front_center + front_half_window + 1)
             ]
-            front_min_dist = float(np.min(front_slice)) if len(front_slice) else min_dist
+            front_min_raw = float(np.min(front_slice)) if len(front_slice) else min_dist
 
             avoid_x, avoid_y, geom_clearance_m, geom_threat = world_map.obstacle_avoidance_field(
                 px,
@@ -719,6 +1136,36 @@ async def collect_data(args):
                 corridor_deg=float(args.obstacle_corridor_deg),
                 safety_margin_m=float(args.obstacle_safety_margin_m),
                 vertical_clearance_m=float(args.obstacle_height_clearance_m),
+            )
+            last_geom_clearance_m = geom_clearance_m
+
+            # Front-distance robustness: reject clear sensor artifacts and debounce hard-stop decisions.
+            likely_front_glitch = (
+                front_min_raw <= float(args.front_zero_glitch_threshold_m)
+                and geom_clearance_m >= float(args.front_zero_ignore_geom_clear_m)
+                and geom_threat <= float(args.front_zero_ignore_geom_threat)
+            )
+            if likely_front_glitch:
+                front_min_dist = max(front_min_filtered, hard_stop_dist + 1.0, geom_clearance_m)
+            else:
+                front_min_dist = front_min_raw
+
+            front_min_filtered = (
+                float(args.front_filter_alpha) * front_min_filtered
+                + (1.0 - float(args.front_filter_alpha)) * front_min_dist
+            )
+            front_eval_dist = min(front_min_dist, front_min_filtered)
+            last_front_min_dist = front_eval_dist
+
+            if front_eval_dist < hard_stop_dist:
+                if front_blocked_since is None:
+                    front_blocked_since = now
+            elif front_eval_dist > (hard_stop_dist + float(args.front_recover_margin_m)):
+                front_blocked_since = None
+
+            front_blocked_persisted = (
+                front_blocked_since is not None
+                and (now - front_blocked_since) >= float(args.front_block_debounce_sec)
             )
 
             route_ux = (dx / dist) if dist > 1e-6 else 0.0
@@ -743,11 +1190,13 @@ async def collect_data(args):
 
             # Desired speed: fast cruise with heading-aware taper and true frontal obstacle braking.
             desired_speed = min(float(args.max_speed), max(float(args.base_speed), 0.70 * dist))
-            if front_min_dist >= slow_down_dist:
+            if args.bridge_only and takeoff_target_alt is None and not (external_mission and external_mission.get("status") == "ACTIVE") and abs(goal_x - px) < 0.5 and abs(goal_y - py) < 0.5:
+                desired_speed = 0.0
+            if front_eval_dist >= slow_down_dist:
                 obstacle_factor = 1.0
             else:
                 obstacle_factor = clamp(
-                    (front_min_dist - hard_stop_dist) / max(1e-6, (slow_down_dist - hard_stop_dist)),
+                    (front_eval_dist - hard_stop_dist) / max(1e-6, (slow_down_dist - hard_stop_dist)),
                     0.0,
                     1.0,
                 )
@@ -767,8 +1216,24 @@ async def collect_data(args):
                 0.35 if args.precision_mode else 0.25,
                 1.0,
             )
+            if yaw_err_abs >= float(args.heading_align_stop_deg):
+                heading_factor = min(heading_factor, float(args.heading_stop_speed_ratio))
+            elif yaw_err_abs >= float(args.heading_align_slow_deg):
+                align_span = max(1.0, float(args.heading_align_stop_deg) - float(args.heading_align_slow_deg))
+                align_frac = (yaw_err_abs - float(args.heading_align_slow_deg)) / align_span
+                heading_factor *= clamp(1.0 - (0.75 * align_frac), float(args.heading_slow_min_ratio), 1.0)
+
+            attitude_soft_deg = max(abs(dstate.roll), abs(dstate.pitch))
+            soft_guard_deg = min(float(args.max_roll_guard_deg), float(args.max_pitch_guard_deg)) * float(args.attitude_soft_guard_ratio)
+            if attitude_soft_deg > soft_guard_deg:
+                excess = attitude_soft_deg - soft_guard_deg
+                span = max(1.0, min(float(args.max_roll_guard_deg), float(args.max_pitch_guard_deg)) - soft_guard_deg)
+                attitude_factor = clamp(1.0 - (excess / span), float(args.attitude_soft_min_speed_ratio), 1.0)
+            else:
+                attitude_factor = 1.0
             if args.precision_mode:
                 desired_speed *= heading_factor
+                desired_speed *= attitude_factor
                 if obstacle_factor < 1.0:
                     desired_speed *= obstacle_factor
                 if geom_clearance_m < (hard_stop_dist + 1.4):
@@ -778,9 +1243,46 @@ async def collect_data(args):
             else:
                 speed_factor = min(obstacle_factor, heading_factor)
                 desired_speed *= speed_factor
+                desired_speed *= attitude_factor
 
-            if front_min_dist < hard_stop_dist:
-                desired_speed = 0.0
+            if front_blocked_persisted:
+                # Avoid dead-stop lockups unless blockage is persistent and geometry is truly critical.
+                if (geom_clearance_m > (hard_stop_dist + 0.45)) and (yaw_err_abs < 45.0):
+                    crawl = min(float(args.min_crawl_speed), float(args.max_speed))
+                    desired_speed = max(desired_speed, crawl)
+                else:
+                    desired_speed = 0.0
+
+            speed_planar_now = math.hypot(dstate.vx, dstate.vy)
+            attitude_unstable = (
+                abs(dstate.roll) > float(args.max_roll_guard_deg)
+                or abs(dstate.pitch) > float(args.max_pitch_guard_deg)
+            )
+            sideslip_unstable = (
+                abs(sideslip_now_deg) > float(args.max_sideslip_guard_deg)
+                and speed_planar_now >= float(args.sideslip_speed_guard_mps)
+            )
+
+            if attitude_unstable or sideslip_unstable:
+                if unstable_since is None:
+                    unstable_since = now
+                elif (now - unstable_since) >= float(args.unstable_persist_sec):
+                    recovery_until = max(recovery_until, now + float(args.recovery_hold_sec))
+                    unstable_since = None
+                    if (now - last_recovery_log) > 0.7:
+                        log(
+                            "Stability guard engaged | "
+                            f"roll={dstate.roll:.1f} pitch={dstate.pitch:.1f} "
+                            f"sideslip={sideslip_now_deg:.1f} speed={speed_planar_now:.2f}"
+                        )
+                        last_recovery_log = now
+            else:
+                unstable_since = None
+
+            recovery_mode = now < recovery_until
+            if recovery_mode:
+                desired_speed = min(desired_speed, float(args.recovery_speed_mps))
+                yaw_target = map_yaw_deg
 
             vx_des = nav_ux * desired_speed
             vy_des = nav_uy * desired_speed
@@ -802,6 +1304,9 @@ async def collect_data(args):
             diff = max(-max_yaw_step, min(max_yaw_step, diff))
             cmd_map_yaw = wrap_deg(map_yaw_deg + diff)
             cmd_yaw = map_yaw_to_heading(cmd_map_yaw)
+            if recovery_mode:
+                cmd_map_yaw = map_yaw_deg
+                cmd_yaw = dstate.yaw
 
             # Body-frame guidance: avoid backward flight, cap side-slip, then transform to NED.
             yaw_err_deg = shortest_diff(map_yaw_deg, target_yaw)
@@ -809,10 +1314,19 @@ async def collect_data(args):
             fwd_des = max(0.0, desired_speed * math.cos(yaw_err_rad))
             lat_gain = 0.08 if args.precision_mode else 0.35
             lat_des = lat_gain * desired_speed * math.sin(yaw_err_rad)
+            if abs(yaw_err_deg) >= float(args.heading_align_stop_deg):
+                fwd_des = min(fwd_des, float(args.heading_stop_forward_mps))
+                lat_des = 0.0
+            elif abs(yaw_err_deg) >= float(args.heading_align_slow_deg):
+                fwd_des *= float(args.heading_slow_forward_scale)
+                lat_des *= float(args.heading_slow_lateral_scale)
+            if recovery_mode:
+                fwd_des = min(fwd_des, float(args.recovery_speed_mps))
+                lat_des = 0.0
             if args.precision_mode and abs(yaw_err_deg) > float(args.forward_hold_deg):
                 fwd_des *= 0.70
                 lat_des *= 0.15
-            if front_min_dist < (hard_stop_dist + 0.8):
+            if front_eval_dist < (hard_stop_dist + 0.8):
                 lat_des *= 0.2
             lat_limit_scale = args.max_lateral_ratio if args.precision_mode else 0.15
             lat_limit = lat_limit_scale * max(1.0, float(args.max_speed))
@@ -851,7 +1365,38 @@ async def collect_data(args):
             v_lateral = (-map_vx * s_metric) + (map_vy * c_metric)
             sideslip_deg = math.degrees(math.atan2(v_lateral, max(0.3, abs(v_forward))))
             heading_error_deg = shortest_diff(map_yaw_deg, yaw_target)
+            last_heading_err_abs = abs(heading_error_deg)
             progress_mps = (dx / max(1e-6, dist)) * map_vx + (dy / max(1e-6, dist)) * map_vy
+
+            # Deadlock escape: large persistent heading error + no progress means route/avoidance lock.
+            heading_stall_eligible = (
+                (now - goal_set_at) >= float(args.heading_stall_grace_sec)
+                and (now - last_replan_at) >= float(args.replan_cooldown_sec)
+            )
+
+            if (
+                heading_stall_eligible
+                and
+                abs(heading_error_deg) >= float(args.heading_stall_err_deg)
+                and abs(progress_mps) <= float(args.heading_stall_progress_mps)
+            ):
+                heading_stall_strikes += 1
+            else:
+                heading_stall_strikes = 0
+
+            if heading_stall_strikes >= int(args.heading_stall_strikes):
+                log(
+                    "Heading-stall detected -> force replan "
+                    f"(head_err={heading_error_deg:.1f}deg, progress={progress_mps:.2f}mps, "
+                    f"front={front_eval_dist:.2f}m, geom={geom_clearance_m:.2f}m)"
+                )
+                goal_x, goal_y = pick_new_goal()
+                goal_set_at = time.time()
+                last_replan_at = now
+                current_path = []
+                heading_stall_strikes = 0
+                low_progress_strikes = 0
+                continue
 
             if args.precision_mode and (time.time() - metrics_log_at) >= max(0.5, float(args.metrics_log_sec)):
                 log(
@@ -859,16 +1404,28 @@ async def collect_data(args):
                     f"xtrack={cross_track_m:.2f}m "
                     f"head_err={heading_error_deg:.1f}deg "
                     f"sideslip={sideslip_deg:.1f}deg "
-                    f"front_clear={front_min_dist:.2f}m "
+                    f"front_clear={front_eval_dist:.2f}m "
                     f"geom_clear={geom_clearance_m:.2f}m "
                     f"tilt={tilt_target_deg:.1f}deg "
                     f"progress={progress_mps:.2f}mps"
                 )
                 metrics_log_at = time.time()
 
-            await drone.offboard.set_velocity_ned(
-                VelocityNedYaw(vx_cmd, vy_cmd, 0.0, cmd_yaw)
-            )
+            vz_cmd = 0.0
+            if takeoff_target_alt is not None:
+                if dstate.rel_alt < max(0.8, takeoff_target_alt - 0.4):
+                    vx_cmd = 0.0
+                    vy_cmd = 0.0
+                    vz_cmd = -clamp(max(0.8, takeoff_target_alt - dstate.rel_alt), 0.8, 1.8)
+                    cmd_yaw = dstate.yaw
+                else:
+                    log(f"Takeoff climb complete at {dstate.rel_alt:.2f}m (target {takeoff_target_alt:.2f}m)")
+                    takeoff_target_alt = None
+
+            if offboard_active:
+                await drone.offboard.set_velocity_ned(
+                    VelocityNedYaw(vx_cmd, vy_cmd, vz_cmd, cmd_yaw)
+                )
 
             row = [
                 time.time(),
@@ -881,10 +1438,10 @@ async def collect_data(args):
                 dstate.yaw,
                 vx_cmd,
                 vy_cmd,
-                0.0,
+                vz_cmd,
                 cmd_yaw,
                 min_dist,
-                front_min_dist,
+                front_eval_dist,
                 cross_track_m,
                 heading_error_deg,
                 sideslip_deg,
@@ -908,73 +1465,251 @@ async def collect_data(args):
                     "heading": dstate.yaw,
                     "speed": math.sqrt(dstate.vx**2 + dstate.vy**2),
                     "battery": 99.0,
-                    "armed": True,
-                    "mode": "TEACHER_BRIDGE",
+                    "armed": dstate.armed,
+                    "in_air": dstate.in_air,
+                    "mode": dstate.mode or "TEACHER_BRIDGE",
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
+                if external_mission and external_mission.get("status") in ("ACTIVE", "PAUSED"):
+                    total_waypoints = len(external_mission.get("waypoints") or [])
+                    current_idx = int(external_mission.get("current_idx") or 0)
+                    telemetry_data.update({
+                        "mission_type": external_mission.get("mission_type") or "CUSTOM",
+                        "mission_status": external_mission.get("status"),
+                        "total_waypoints": total_waypoints,
+                        "current_waypoint_index": min(total_waypoints, current_idx + 1) if total_waypoints else 0,
+                        "estimated_remaining_s": max(0, int((total_waypoints - current_idx) * 60)) if total_waypoints else 0,
+                        "started_at": external_mission.get("started_at"),
+                    })
                 try:
                     await redis_client.publish('telemetry', json.dumps(telemetry_data))
                 except Exception:
                     pass
                 
-                # 2. Check Commands
+                # 2. Check Commands  (drain all pending; break when queue is empty)
                 try:
                     while True:
                         message = await redis_pubsub.get_message(ignore_subscribe_messages=True, timeout=0.01)
-                        if message and message['type'] == 'message':
-                            raw = message.get('data')
-                            if isinstance(raw, (bytes, bytearray)):
-                                raw = raw.decode('utf-8', errors='replace')
+                        if message is None:
+                            break  # no more messages – exit drain loop so writer.writerow() is reached
+                        if message['type'] != 'message':
+                            continue
+                        raw = message.get('data')
+                        if isinstance(raw, (bytes, bytearray)):
+                            raw = raw.decode('utf-8', errors='replace')
+                        try:
                             payload = json.loads(raw)
-                            if (payload.get('drone_id') or '').strip() not in ('', args.drone_id):
-                                continue
-                            
+                        except Exception:
+                            continue
+                        if (payload.get('drone_id') or '').strip() not in ('', args.drone_id):
+                            continue
+                        if True:  # scoping block (was: outer `if message and ...`)
                             action = payload.get('action')
                             log(f"--> Received Command: {action}")
-                            
-                            if action == 'takeoff':
+
+                            if action == 'arm':
                                 try:
                                     await drone.action.arm()
-                                    await drone.action.takeoff()
                                 except Exception as e:
-                                    log(f"!! Takeoff failed: {e}")
+                                    if 'COMMAND_DENIED' in str(e).upper():
+                                        log("!! Arm denied, re-applying demo PX4 params and retrying once...")
+                                        await apply_demo_px4_params(drone)
+                                        await asyncio.sleep(0.25)
+                                        try:
+                                            await drone.action.arm()
+                                        except Exception as retry_exc:
+                                            log(f"!! Arm retry failed: {retry_exc}")
+                                    else:
+                                        log(f"!! Arm failed: {e}")
+
+                            elif action == 'disarm':
+                                try:
+                                    takeoff_target_alt = None
+                                    if dstate.in_air or dstate.rel_alt > 0.6:
+                                        log("!! Disarm ignored: vehicle is airborne")
+                                    else:
+                                        try:
+                                            await drone.offboard.stop()
+                                        except Exception:
+                                            pass
+                                        offboard_active = False
+                                        await drone.action.disarm()
+                                except Exception as e:
+                                    log(f"!! Disarm failed: {e}")
+
+                            elif action == 'takeoff':
+                                try:
+                                    target_alt = float((payload.get('params') or {}).get('altitude', args.alt))
+                                    target_alt = max(1.5, target_alt)
+                                    if not dstate.armed:
+                                        await drone.action.arm()
+                                        await asyncio.sleep(1.5)
+                                    else:
+                                        await asyncio.sleep(0.8)
+                                    if (not args.bridge_only) and offboard_active:
+                                        try:
+                                            await drone.offboard.stop()
+                                        except Exception:
+                                            pass
+                                        offboard_active = False
+                                        await asyncio.sleep(0.2)
+                                    try:
+                                        await drone.action.set_takeoff_altitude(target_alt)
+                                    except Exception:
+                                        pass
+                                    await drone.action.takeoff()
+                                    await asyncio.sleep(1.0)
+                                    if (not args.bridge_only) and (not offboard_active):
+                                        try:
+                                            await ensure_offboard_started()
+                                        except Exception as offboard_exc:
+                                            log(f"!! Offboard start warning after takeoff: {offboard_exc}")
+                                    takeoff_target_alt = None if args.bridge_only else target_alt
+                                    log(f"--> Takeoff override armed to {target_alt:.1f}m")
+                                except Exception as e:
+                                    if 'COMMAND_DENIED' in str(e).upper():
+                                        log("!! Takeoff denied, re-applying demo PX4 params and retrying once...")
+                                        await apply_demo_px4_params(drone)
+                                        await asyncio.sleep(0.25)
+                                        try:
+                                            if not dstate.armed:
+                                                await drone.action.arm()
+                                                await asyncio.sleep(1.5)
+                                            else:
+                                                await asyncio.sleep(0.8)
+                                            if (not args.bridge_only) and offboard_active:
+                                                try:
+                                                    await drone.offboard.stop()
+                                                except Exception:
+                                                    pass
+                                                offboard_active = False
+                                                await asyncio.sleep(0.2)
+                                            try:
+                                                await drone.action.set_takeoff_altitude(target_alt)
+                                            except Exception:
+                                                pass
+                                            await drone.action.takeoff()
+                                            await asyncio.sleep(1.0)
+                                            if (not args.bridge_only) and (not offboard_active):
+                                                try:
+                                                    await ensure_offboard_started()
+                                                except Exception as offboard_exc:
+                                                    log(f"!! Offboard start warning after takeoff retry: {offboard_exc}")
+                                            takeoff_target_alt = None if args.bridge_only else target_alt
+                                            log(f"--> Takeoff retry armed to {target_alt:.1f}m")
+                                        except Exception as retry_exc:
+                                            log(f"!! Takeoff retry failed: {retry_exc}")
+                                    else:
+                                        log(f"!! Takeoff failed: {e}")
 
                             elif action == 'land':
                                 try:
+                                    takeoff_target_alt = None
+                                    try:
+                                        await drone.offboard.stop()
+                                    except Exception:
+                                        pass
+                                    offboard_active = False
                                     await drone.action.land()
-                                    # Break the loop if landing? Optional.
                                 except Exception as e:
                                     log(f"!! Land failed: {e}")
 
                             elif action == 'goto':
-                                # Global (Lat/Lon) -> Local (North/East) relative to current
-                                # Simple approximation for small localized missions
                                 target_lat = float(payload['params']['latitude'])
                                 target_lon = float(payload['params']['longitude'])
-                                
-                                # Current
-                                lat0, lon0 = dstate.lat, dstate.lon
-                                px0, py0 = get_local_pos()
-                                
-                                # Delta in NED-like meters
-                                dLat = target_lat - lat0
-                                dLon = target_lon - lon0
-                                d_north = dLat * 111319.0
-                                d_east = dLon * 111319.0 * math.cos(math.radians(lat0))
+                                if not offboard_active:
+                                    await ensure_offboard_started()
+                                external_mission = None
+                                set_goal_from_global(target_lat, target_lon)
+                                log(f"--> Override Goal: {goal_x:.1f}, {goal_y:.1f}")
 
-                                cur_map_x, cur_map_y = get_local_pos()
-                                d_map_x, d_map_y = ned_to_map_xy(d_north, d_east)
-                                new_x = cur_map_x + d_map_x
-                                new_y = cur_map_y + d_map_y
-                                
-                                log(f"--> Override Goal: {new_x:.1f}, {new_y:.1f}")
-                                goal_x, goal_y = new_x, new_y
-                                current_path = [] # Trigger replan
+                            elif action == 'mission_start':
+                                params = payload.get('params') or {}
+                                raw_waypoints = params.get('waypoints') or []
+                                mission_type = str(params.get('mission_type') or 'CUSTOM')
+                                parsed_waypoints = []
+                                for wp in raw_waypoints:
+                                    if isinstance(wp, (list, tuple)) and len(wp) >= 2:
+                                        parsed_waypoints.append([
+                                            float(wp[0]),
+                                            float(wp[1]),
+                                            float(wp[2]) if len(wp) > 2 else float(args.alt),
+                                        ])
+                                if not parsed_waypoints:
+                                    log("!! Mission start ignored: no valid waypoints")
+                                    continue
+                                external_mission = {
+                                    "mission_type": mission_type,
+                                    "waypoints": parsed_waypoints,
+                                    "current_idx": 0,
+                                    "status": "ACTIVE",
+                                    "started_at": datetime.now(timezone.utc).isoformat(),
+                                    "await_takeoff_alt": None,
+                                }
+                                target_alt = max(1.5, float(parsed_waypoints[0][2]))
+                                if not dstate.armed:
+                                    try:
+                                        await drone.action.arm()
+                                        await asyncio.sleep(1.5)
+                                    except Exception as mission_arm_exc:
+                                        log(f"!! Mission arm warning: {mission_arm_exc}")
+                                if not dstate.in_air and dstate.rel_alt < max(0.8, target_alt - 0.7):
+                                    try:
+                                        await drone.action.set_takeoff_altitude(target_alt)
+                                    except Exception:
+                                        pass
+                                    await drone.action.takeoff()
+                                    external_mission["await_takeoff_alt"] = target_alt
+                                    log(f"--> External mission armed; awaiting climb to {target_alt:.1f}m")
+                                else:
+                                    if not offboard_active:
+                                        await ensure_offboard_started()
+                                    set_goal_from_global(float(parsed_waypoints[0][0]), float(parsed_waypoints[0][1]))
+                                    log(f"--> External mission started with {len(parsed_waypoints)} waypoint(s)")
+
+                            elif action == 'mission_pause':
+                                if external_mission and external_mission.get("status") == "ACTIVE":
+                                    external_mission["status"] = "PAUSED"
+                                    px_hold, py_hold = get_local_pos()
+                                    goal_x, goal_y = px_hold, py_hold
+                                    goal_set_at = time.time()
+                                    current_path = [(px_hold, py_hold)]
+                                    path_index = 0
+                                    log("--> External mission paused")
+
+                            elif action == 'mission_resume':
+                                if external_mission and external_mission.get("status") == "PAUSED":
+                                    external_mission["status"] = "ACTIVE"
+                                    if external_mission.get("await_takeoff_alt") is None:
+                                        wp = external_mission["waypoints"][external_mission["current_idx"]]
+                                        if not offboard_active:
+                                            await ensure_offboard_started()
+                                        set_goal_from_global(float(wp[0]), float(wp[1]))
+                                    log("--> External mission resumed")
+
+                            elif action == 'mission_stop':
+                                stop_external_mission("--> External mission stopped")
                                 
                 except Exception as e:
-                    pass
+                    log(f"!! Redis command loop warning: {e}")
 
             writer.writerow(row)
+            f.flush()  # guarantee data lands on disk each cycle
+
+            # --- Segmentation feed (lidar-derived obstacle detection for app Analytics panel) ---
+            if dstate.in_air:
+                _threat = float(geom_threat)
+                _front_conf = max(0.0, min(1.0, 1.0 - (float(front_eval_dist) / 20.0)))
+                if _threat > 0.15 or _front_conf > 0.3:
+                    _det_class = "obstacle" if (_threat > 0.35 or _front_conf > 0.55) else "proximity_alert"
+                    _max_conf = round(max(_threat, _front_conf), 3)
+                    seg_log_writer.writerow([
+                        args.drone_id,
+                        _det_class,
+                        _max_conf,
+                        datetime.now(timezone.utc).isoformat(),
+                    ])
+                    seg_log_f.flush()
     finally:
         try:
             try:
@@ -985,6 +1720,15 @@ async def collect_data(args):
         except Exception:
             pass
         f.close()
+        try:
+            seg_log_f.close()
+        except Exception:
+            pass
+        if args.auto_analyze:
+            out_path = Path(args.out)
+            stem = out_path.stem
+            report_path = args.analysis_report if args.analysis_report else str(out_path.with_name(f"{stem}_analysis.json"))
+            analyze_telemetry_csv(args.out, report_path)
         print("Done (ONLINE mode)!")
 
 
@@ -1129,6 +1873,11 @@ def collect_data_offline(args):
             writer.writerow(row)
     finally:
         f.close()
+        if args.auto_analyze:
+            out_path = Path(args.out)
+            stem = out_path.stem
+            report_path = args.analysis_report if args.analysis_report else str(out_path.with_name(f"{stem}_analysis.json"))
+            analyze_telemetry_csv(args.out, report_path)
         print("Done (OFFLINE mode)!")
 
 
@@ -1137,12 +1886,18 @@ if __name__ == "__main__":
     parser.add_argument("--drone-id", type=str, default=os.environ.get("DRONE_ID", "SENTINEL-01"))
     parser.add_argument("--out", type=str, default="dataset/px4_teacher/telemetry_god.csv")
     parser.add_argument("--system", type=str, default="udpin://0.0.0.0:14540")
-    parser.add_argument("--duration", type=float, default=300.0)
+    parser.add_argument("--duration", type=float, default=0.0, help="Run duration in seconds. Use 0 for continuous run.")
+    parser.add_argument("--bridge_only", action="store_true", help="Run as a passive control bridge for the app without autonomous teacher navigation.")
+    parser.add_argument("--no_bridge_only", action="store_false", dest="bridge_only", help="Enable autonomous teacher navigation/pathfinding.")
     parser.add_argument("--alt", type=float, default=15.0)
     parser.add_argument("--hz", type=float, default=20.0)
-    parser.add_argument("--base_speed", type=float, default=6.0)
-    parser.add_argument("--max_speed", type=float, default=12.0)
+    parser.add_argument("--base_speed", type=float, default=2.2)
+    parser.add_argument("--max_speed", type=float, default=4.2)
+    parser.add_argument("--min_crawl_speed", type=float, default=0.6, help="Minimum forward crawl speed used near hard-stop threshold when corridor is still feasible.")
     parser.add_argument("--yaw_rate_limit", type=float, default=65.0)
+    parser.add_argument("--safe_presentation_profile", action="store_true", help="Enable conservative safety limits suitable for demos.")
+    parser.add_argument("--no_safe_presentation_profile", action="store_false", dest="safe_presentation_profile", help="Disable conservative demo safety profile.")
+    parser.set_defaults(safe_presentation_profile=True)
     parser.add_argument("--precision_mode", action="store_true", help="Enable strict path-tracking Falcon mode.")
     parser.add_argument("--no_precision_mode", action="store_false", dest="precision_mode", help="Disable Falcon precision controller.")
     parser.set_defaults(precision_mode=True)
@@ -1151,15 +1906,47 @@ if __name__ == "__main__":
     parser.add_argument("--crosstrack_heading_cap_deg", type=float, default=14.0, help="Max cross-track heading correction in degrees.")
     parser.add_argument("--max_lateral_ratio", type=float, default=0.04, help="Max lateral speed as ratio of max_speed in precision mode.")
     parser.add_argument("--forward_hold_deg", type=float, default=45.0, help="Hold forward speed down when heading error exceeds this.")
+    parser.add_argument("--heading_align_slow_deg", type=float, default=22.0, help="Begin strongly damping translation when heading error exceeds this.")
+    parser.add_argument("--heading_align_stop_deg", type=float, default=38.0, help="Nearly stop translation and yaw in place when heading error exceeds this.")
+    parser.add_argument("--heading_slow_min_ratio", type=float, default=0.22, help="Minimum speed ratio while in heading-alignment slow zone.")
+    parser.add_argument("--heading_stop_speed_ratio", type=float, default=0.10, help="Maximum speed ratio when heading error exceeds the stop threshold.")
+    parser.add_argument("--heading_stop_forward_mps", type=float, default=0.18, help="Maximum forward speed when yaw error is above the heading stop threshold.")
+    parser.add_argument("--heading_slow_forward_scale", type=float, default=0.45, help="Forward speed multiplier in the heading-alignment slow zone.")
+    parser.add_argument("--heading_slow_lateral_scale", type=float, default=0.08, help="Lateral speed multiplier in the heading-alignment slow zone.")
     parser.add_argument("--obstacle_lookahead_m", type=float, default=12.0, help="Geometry obstacle lookahead distance in meters.")
     parser.add_argument("--obstacle_corridor_deg", type=float, default=65.0, help="Forward corridor half-angle for geometry avoidance.")
     parser.add_argument("--obstacle_safety_margin_m", type=float, default=1.4, help="Extra obstacle volume margin in meters.")
     parser.add_argument("--obstacle_height_clearance_m", type=float, default=1.2, help="Ignore obstacles lower than altitude minus this clearance.")
     parser.add_argument("--avoidance_gain", type=float, default=0.95, help="Gain for geometry threat to route/avoidance blending.")
     parser.add_argument("--max_avoidance_blend", type=float, default=0.70, help="Upper bound on avoidance blending factor.")
-    parser.add_argument("--max_lateral_accel_mps2", type=float, default=2.4, help="Max lateral acceleration command magnitude.")
-    parser.add_argument("--max_tilt_deg", type=float, default=14.0, help="Maximum target lateral tilt angle for smooth maneuvering.")
+    parser.add_argument("--max_lateral_accel_mps2", type=float, default=2.0, help="Max lateral acceleration command magnitude.")
+    parser.add_argument("--max_tilt_deg", type=float, default=12.0, help="Maximum target lateral tilt angle for smooth maneuvering.")
+    parser.add_argument("--max_roll_guard_deg", type=float, default=30.0, help="Trigger recovery if absolute roll exceeds this (deg).")
+    parser.add_argument("--max_pitch_guard_deg", type=float, default=30.0, help="Trigger recovery if absolute pitch exceeds this (deg).")
+    parser.add_argument("--attitude_soft_guard_ratio", type=float, default=0.55, help="Begin damping translation once roll/pitch reaches this fraction of the hard guard.")
+    parser.add_argument("--attitude_soft_min_speed_ratio", type=float, default=0.18, help="Minimum speed ratio allowed once soft attitude damping is active.")
+    parser.add_argument("--max_sideslip_guard_deg", type=float, default=28.0, help="Trigger recovery if absolute sideslip exceeds this (deg).")
+    parser.add_argument("--sideslip_speed_guard_mps", type=float, default=1.2, help="Minimum horizontal speed before sideslip guard can trigger.")
+    parser.add_argument("--unstable_persist_sec", type=float, default=0.35, help="Seconds instability must persist before recovery mode engages.")
+    parser.add_argument("--recovery_hold_sec", type=float, default=1.8, help="Seconds to hold conservative recovery commands once triggered.")
+    parser.add_argument("--recovery_speed_mps", type=float, default=0.8, help="Max forward speed while recovery mode is active.")
+    parser.add_argument("--front_filter_alpha", type=float, default=0.72, help="EMA smoothing factor for front clearance (higher=more smoothing).")
+    parser.add_argument("--front_block_debounce_sec", type=float, default=0.7, help="Seconds front blockage must persist before hard-stop logic engages.")
+    parser.add_argument("--front_recover_margin_m", type=float, default=0.55, help="Hysteresis margin above hard-stop distance to clear blocked state.")
+    parser.add_argument("--front_zero_glitch_threshold_m", type=float, default=0.05, help="Treat front distances below this as potential glitch candidates.")
+    parser.add_argument("--front_zero_ignore_geom_clear_m", type=float, default=4.0, help="Ignore zero-front spikes when geometry clearance is above this.")
+    parser.add_argument("--front_zero_ignore_geom_threat", type=float, default=0.2, help="Ignore zero-front spikes when geometry threat is below this.")
     parser.add_argument("--metrics_log_sec", type=float, default=1.5, help="Seconds between Falcon quality metric logs.")
+    parser.add_argument("--heading_stall_err_deg", type=float, default=110.0, help="Heading error threshold for stall detection.")
+    parser.add_argument("--heading_stall_progress_mps", type=float, default=0.20, help="Progress threshold below which heading-stall samples count.")
+    parser.add_argument("--heading_stall_strikes", type=int, default=12, help="Consecutive heading-stall samples before forced replan.")
+    parser.add_argument("--progress_window_sec", type=float, default=10.0, help="Seconds between anti-stall progress checks.")
+    parser.add_argument("--min_progress_m", type=float, default=1.5, help="Minimum movement in progress window before counting a low-progress strike.")
+    parser.add_argument("--replan_strikes", type=int, default=5, help="Consecutive low-progress strikes required before forcing a replan.")
+    parser.add_argument("--goal_grace_sec", type=float, default=9.0, help="Grace period after setting a new goal before low-progress strikes can accumulate.")
+    parser.add_argument("--replan_heading_hold_deg", type=float, default=80.0, help="Do not count low-progress strikes while heading error exceeds this angle.")
+    parser.add_argument("--replan_cooldown_sec", type=float, default=3.5, help="Minimum seconds between forced replans to avoid oscillation.")
+    parser.add_argument("--heading_stall_grace_sec", type=float, default=2.5, help="Ignore heading-stall counting briefly after each new goal/replan.")
     parser.add_argument("--sdf_path", type=str, default=os.environ.get("SDF_PATH", "obstacles.sdf"))
     parser.add_argument("--offline", action="store_true", help="Run without PX4/Gazebo (pure Python)")
     parser.add_argument(
@@ -1176,11 +1963,41 @@ if __name__ == "__main__":
     )
     parser.add_argument("--redis-host", type=str, default="127.0.0.1")
     parser.add_argument("--redis-port", type=int, default=6379)
+    parser.add_argument("--auto_analyze", action="store_true", help="Automatically analyze telemetry CSV at end of run.")
+    parser.add_argument("--no_auto_analyze", action="store_false", dest="auto_analyze", help="Disable end-of-run telemetry analysis.")
+    parser.add_argument("--analysis_report", type=str, default="", help="Optional explicit path for JSON auto-analysis report.")
+    parser.set_defaults(auto_analyze=True)
+    parser.set_defaults(bridge_only=False)
 
     args = parser.parse_args()
+    if args.safe_presentation_profile:
+        args.hz = min(float(args.hz), 15.0)
+        args.base_speed = min(float(args.base_speed), 0.9)
+        args.max_speed = min(float(args.max_speed), 1.8)
+        args.min_crawl_speed = min(float(args.min_crawl_speed), 0.22)
+        args.yaw_rate_limit = min(float(args.yaw_rate_limit), 24.0)
+        args.crosstrack_kp = min(float(args.crosstrack_kp), 2.0)
+        args.crosstrack_heading_cap_deg = min(float(args.crosstrack_heading_cap_deg), 8.0)
+        args.max_lateral_ratio = min(float(args.max_lateral_ratio), 0.015)
+        args.avoidance_gain = min(float(args.avoidance_gain), 0.55)
+        args.max_avoidance_blend = min(float(args.max_avoidance_blend), 0.32)
+        args.max_lateral_accel_mps2 = min(float(args.max_lateral_accel_mps2), 0.55)
+        args.max_tilt_deg = min(float(args.max_tilt_deg), 5.5)
+        args.recovery_speed_mps = min(float(args.recovery_speed_mps), 0.35)
+        args.heading_align_slow_deg = min(float(args.heading_align_slow_deg), 18.0)
+        args.heading_align_stop_deg = min(float(args.heading_align_stop_deg), 30.0)
+        args.heading_slow_min_ratio = min(float(args.heading_slow_min_ratio), 0.18)
+        args.heading_stop_speed_ratio = min(float(args.heading_stop_speed_ratio), 0.06)
+        args.heading_stop_forward_mps = min(float(args.heading_stop_forward_mps), 0.10)
+        args.heading_slow_forward_scale = min(float(args.heading_slow_forward_scale), 0.30)
+        args.heading_slow_lateral_scale = min(float(args.heading_slow_lateral_scale), 0.04)
+        args.attitude_soft_guard_ratio = min(float(args.attitude_soft_guard_ratio), 0.45)
+        args.attitude_soft_min_speed_ratio = min(float(args.attitude_soft_min_speed_ratio), 0.12)
+
     if args.offline:
         collect_data_offline(args)
     else:
+        acquire_single_instance_lock()
         asyncio.run(collect_data(args))
 
 

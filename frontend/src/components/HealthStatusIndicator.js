@@ -6,16 +6,11 @@ import {
   Clock,
   Cpu,
   ShieldCheck,
-  ShieldAlert,
-  Activity,
-  Shield,
-  CheckCircle,
-  AlertTriangle,
-  AlertCircle
+  ShieldAlert
 } from 'lucide-react';
 import { BACKEND_URL } from '../config';
 
-const HealthStatusIndicator = () => {
+const HealthStatusIndicator = ({ linkMetrics }) => {
   const [health, setHealth] = useState(null);
   const [error, setError] = useState(null);
 
@@ -26,7 +21,14 @@ const HealthStatusIndicator = () => {
         setHealth(response.data);
         setError(null);
       } catch (err) {
-        setError(`Link_Severed`);
+        const status = err?.response?.status;
+        if (status === 401) {
+          setError('Auth_Required');
+        } else if (status === 403) {
+          setError('Access_Denied');
+        } else {
+          setError('Link_Severed');
+        }
         setHealth(null);
       }
     };
@@ -78,6 +80,13 @@ const HealthStatusIndicator = () => {
                 <span className="text-lesnar-success">Neural_Ok</span> :
                 <span className="text-lesnar-warning">Neural_Fail</span>
               }
+            </div>
+
+            <div className="flex items-center pl-3" title="Frontend link quality">
+              <Clock className="h-3 w-3 mr-1.5 opacity-50" />
+              <span className={linkMetrics?.degradedMode ? 'text-lesnar-warning' : 'text-lesnar-success'}>
+                {linkMetrics?.latencyMs != null ? `${linkMetrics.latencyMs}ms` : 'RTT_?'}
+              </span>
             </div>
           </>
         )}

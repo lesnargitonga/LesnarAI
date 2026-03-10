@@ -3,6 +3,21 @@
   background: linear-gradient(135deg, #05070A 0%, #12161F 100%);
 }
 
+.tactical-grid {
+  background-image:
+    linear-gradient(rgba(0, 245, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 245, 255, 0.04) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(circle at center, black 35%, transparent 90%);
+}
+
+.tactical-vignette {
+  background:
+    radial-gradient(circle at 15% 15%, rgba(0, 245, 255, 0.10), transparent 35%),
+    radial-gradient(circle at 85% 20%, rgba(123, 97, 255, 0.08), transparent 35%),
+    radial-gradient(circle at 50% 100%, rgba(255, 0, 85, 0.06), transparent 38%);
+}
+
 .card {
   @apply glass-dark rounded-xl p-6 transition-all duration-300 hover:neo-glow;
 }
@@ -165,4 +180,124 @@
 
 .hud-corner {
   @apply absolute w-2 h-2 border-lesnar-accent;
+}
+
+/* Readability hardening for operations use */
+.text-\[8px\],
+.text-\[9px\],
+.text-\[10px\] {
+  font-size: 0.75rem !important;
+  line-height: 1rem !important;
+}
+
+.text-gray-500,
+.text-gray-600 {
+  color: rgba(209, 213, 219, 0.92) !important;
+}
+
+/* Optional light mode */
+.theme-light {
+  color: #0f172a;
+}
+
+.theme-light .tactical-grid,
+.theme-light .tactical-vignette {
+  opacity: 0.18 !important;
+}
+
+.theme-light .bg-navy-black,
+.theme-light .bg-navy-black\/80,
+.theme-light .bg-navy-black\/60,
+.theme-light .bg-navy-black\/50,
+.theme-light .bg-navy-black\/40,
+.theme-light .bg-navy-black\/20 {
+  background-color: #f2f5fa !important;
+}
+
+.theme-light .glass-dark,
+.theme-light .glass {
+  background: rgba(255, 255, 255, 0.88) !important;
+  border-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+.theme-light .text-white {
+  color: #0f172a !important;
+}
+
+.theme-light .text-gray-400,
+.theme-light .text-gray-500,
+.theme-light .text-gray-600,
+.theme-light .text-gray-300 {
+  color: rgba(30, 41, 59, 0.86) !important;
+}
+
+.theme-light .text-lesnar-accent {
+  color: #0f766e !important;
+}
+
+.theme-light .text-lesnar-warning {
+  color: #a16207 !important;
+}
+
+.theme-light .text-lesnar-success {
+  color: #166534 !important;
+}
+
+.theme-light .text-lesnar-danger {
+  color: #b91c1c !important;
+}
+
+.theme-light .bg-black\/40,
+.theme-light .bg-black\/50,
+.theme-light .bg-black\/60 {
+  background-color: rgba(255, 255, 255, 0.92) !important;
+}
+
+.theme-light .btn-primary {
+  background-color: rgba(15, 118, 110, 0.1) !important;
+  border-color: rgba(15, 118, 110, 0.28) !important;
+  color: #0f766e !important;
+  text-shadow: none !important;
+}
+
+.theme-light .btn-secondary {
+  background-color: rgba(15, 23, 42, 0.04) !important;
+  border-color: rgba(15, 23, 42, 0.1) !important;
+  color: #334155 !important;
+}
+
+.theme-light .btn-danger {
+  background-color: rgba(185, 28, 28, 0.08) !important;
+  border-color: rgba(185, 28, 28, 0.22) !important;
+  color: #b91c1c !important;
+}
+
+.theme-light .btn-success {
+  background-color: rgba(22, 101, 52, 0.08) !important;
+  border-color: rgba(22, 101, 52, 0.22) !important;
+  color: #166534 !important;
+}
+
+.theme-light .hover\:text-white:hover {
+  color: #0f172a !important;
+}
+
+.theme-light .border-white\/5,
+.theme-light .border-white\/10 {
+  border-color: rgba(15, 23, 42, 0.1) !important;
+}
+
+.theme-light .leaflet-container {
+  filter: none;
+}
+
+.ops-degraded .tactical-grid,
+.ops-degraded .tactical-vignette {
+  opacity: 0.08 !important;
+}
+
+.ops-degraded .neo-glow,
+.ops-degraded .text-glow {
+  box-shadow: none !important;
+  text-shadow: none !important;
 }

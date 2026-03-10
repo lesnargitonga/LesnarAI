@@ -5,6 +5,8 @@ import './App.css';
 
 import { BACKEND_URL } from './config';
 
+import api from './api';
+import { getLinkMode } from './utils/operational';
 // Components
 import Header from './components/Header';
 import HealthStatusIndicator from './components/HealthStatusIndicator';
@@ -17,7 +19,9 @@ import Analytics from './components/Analytics';
 import Settings from './components/Settings';
 import DiagnosticTerminal from './components/DiagnosticTerminal';
 import ErrorBoundary from './components/ErrorBoundary';
+import AuthGate from './components/AuthGate';
 
+import TacticalHotkeys from './components/TacticalHotkeys';
 // Context for global state
 import { DroneProvider } from './context/DroneContext';
 
@@ -25,7 +29,14 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [connected, setConnected] = useState(false);
   const [socket, setSocket] = useState(null);
+  const [latencyMs, setLatencyMs] = useState(null);
+  const [lastTelemetryAt, setLastTelemetryAt] = useState(null);
   const [terminalOpen, setTerminalOpen] = useState(true);
+  const [themeMode, setThemeMode] = useState(() => window.localStorage.getItem('lesnar.ui.theme') || 'dark');
+
+  useEffect(() => {
+    window.localStorage.setItem('lesnar.ui.theme', themeMode);
+  }, [themeMode]);
 
   useEffect(() => {
     // Initialize socket connection
@@ -44,6 +55,10 @@ function App() {
       setConnected(false);
     });
 
+    newSocket.on('telemetry_update', () => {
+      setLastTelemetryAt(Date.now());
+    });
+
     setSocket(newSocket);
 
     // Cleanup on unmount
@@ -52,15 +67,44 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    const probe = async () => {
+      const started = performance.now();
+      try {
+        await api.get('/api/health');
+        if (mounted) setLatencyMs(Math.round(performance.now() - started));
+      } catch {
+        if (mounted) setLatencyMs(null);
+      }
+    };
+    probe();
+    const timer = setInterval(probe, 10000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const telemetryAgeMs = lastTelemetryAt == null ? Number.POSITIVE_INFINITY : Math.max(0, Date.now() - lastTelemetryAt);
+  const linkMode = getLinkMode({ connected, latencyMs, telemetryAgeMs });
+  const linkMetrics = { connected, latencyMs, telemetryAgeMs, lastTelemetryAt, linkMode, degradedMode: linkMode.degraded };
+
   return (
-    <DroneProvider>
-      <Router>
-        <div className="h-screen bg-navy-black text-white flex overflow-hidden">
-          {/* Sidebar */}
-          <Sidebar
-            isOpen={sidebarOpen}
-            onClose={() => setSidebarOpen(false)}
-          />
+    <AuthGate>
+      <DroneProvider socketConnected={connected}>
+        <Router>
+          <div className={`min-h-screen bg-navy-black text-white flex overflow-hidden relative ${themeMode === 'light' ? 'theme-light' : 'theme-dark'} ${linkMetrics.degradedMode ? 'ops-degraded' : ''}`}>
+            <TacticalHotkeys />
+            <div className="pointer-events-none absolute inset-0 tactical-vignette opacity-90" />
+            <div className="pointer-events-none absolute inset-0 tactical-grid opacity-60" />
+            {/* Sidebar */}
+            <Sidebar
+              isOpen={sidebarOpen}
+              onClose={() => setSidebarOpen(false)}
+              connected={connected}
+              linkMetrics={linkMetrics}
+            />
 
           {/* Main content */}
           <div className="flex-1 flex flex-col overflow-hidden relative">
@@ -68,17 +112,20 @@ function App() {
             <Header
               onMenuClick={() => setSidebarOpen(!sidebarOpen)}
               connected={connected}
+              themeMode={themeMode}
+              onThemeToggle={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+              linkMetrics={linkMetrics}
             />
 
             {/* Page content */}
-            <main className="flex-1 overflow-x-hidden overflow-y-auto bg-navy-black/50 custom-scrollbar pt-6">
+            <main className="flex-1 overflow-x-hidden overflow-y-auto bg-navy-black/50 custom-scrollbar pt-2">
               <ErrorBoundary>
                 <Routes>
-                  <Route path="/" element={<Dashboard socket={socket} />} />
-                  <Route path="/map" element={<DroneMap socket={socket} />} />
+                  <Route path="/" element={<Dashboard socket={socket} linkMetrics={linkMetrics} />} />
+                  <Route path="/map" element={<DroneMap socket={socket} linkMetrics={linkMetrics} />} />
                   <Route path="/drones" element={<DroneList socket={socket} />} />
-                  <Route path="/missions" element={<MissionControl socket={socket} />} />
-                  <Route path="/analytics" element={<Analytics socket={socket} />} />
+                  <Route path="/missions" element={<MissionControl socket={socket} linkMetrics={linkMetrics} />} />
+                  <Route path="/analytics" element={<Analytics socket={socket} linkMetrics={linkMetrics} />} />
                   <Route path="/settings" element={<Settings />} />
                 </Routes>
               </ErrorBoundary>
@@ -98,17 +145,18 @@ function App() {
                   {terminalOpen ? '[ Minimize ]' : '[ Maximize ]'}
                 </button>
               </div>
-              {terminalOpen && <DiagnosticTerminal socket={socket} />}
+              {terminalOpen && <DiagnosticTerminal socket={socket} linkMetrics={linkMetrics} />}
             </div>
           </div>
 
           {/* Global health status indicator - refined position */}
           <div className="fixed bottom-12 right-6 z-50">
-            <HealthStatusIndicator />
+            <HealthStatusIndicator linkMetrics={linkMetrics} />
           </div>
-        </div>
-      </Router>
-    </DroneProvider>
+          </div>
+        </Router>
+      </DroneProvider>
+    </AuthGate>
   );
 }
 

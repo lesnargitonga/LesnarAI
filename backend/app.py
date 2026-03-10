@@ -8,7 +8,7 @@ import re
 import sys
 import json
 import time as _time
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -20,13 +20,34 @@ from flask_limiter.util import get_remote_address
 import threading
 import time
 import socket
+import math
 from pathlib import Path
 import logging
 import urllib.parse
 import urllib.request
 import redis
+import uuid
+import hashlib
+import hmac
 
-from db import db, get_database_url, safe_log_command, Drone, Mission as MissionModel, MissionRun, safe_log_event
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+try:
+    from werkzeug.security import check_password_hash as _werkzeug_check_password_hash
+except Exception:
+    _werkzeug_check_password_hash = None
+
+from db import (
+    db,
+    get_database_url,
+    safe_log_command,
+    Drone,
+    Mission as MissionModel,
+    MissionRun,
+    safe_log_event,
+    AuthSession,
+    TelemetrySample,
+    Event as AuditEvent,
+)
 
 # Add drone_simulation to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'drone_simulation'))
@@ -40,15 +61,61 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
+def _env_str(name: str, default: str = '') -> str:
+    return (os.environ.get(name) or default).strip()
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = _env_str(name, str(default))
+    try:
+        return int(raw)
+    except Exception:
+        return int(default)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = _env_str(name, str(default))
+    try:
+        return float(raw)
+    except Exception:
+        return float(default)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = _env_str(name, '1' if default else '0').lower()
+    return raw in ('1', 'true', 'yes', 'on')
+
+
+def _parse_cors_origins() -> list[str]:
+    raw = _env_str('LESNAR_CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000')
+    origins = [origin.strip() for origin in raw.split(',') if origin.strip()]
+    return origins or ['http://localhost:3000', 'http://127.0.0.1:3000']
+
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = (os.environ.get('FLASK_SECRET_KEY') or 'dev-secret').strip()
+app.config['SECRET_KEY'] = _env_str('FLASK_SECRET_KEY', 'dev-secret')
 app.config['SQLALCHEMY_DATABASE_URI'] = get_database_url()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+_CORS_ORIGINS = _parse_cors_origins()
+CORS(app, resources={r"/api/*": {"origins": _CORS_ORIGINS}})
+socketio = SocketIO(app, cors_allowed_origins=_CORS_ORIGINS, async_mode='threading')
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"],
                   storage_uri="memory://")
+
+# --- Security response headers ---
+@app.after_request
+def _add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
+    response.headers['Cache-Control'] = 'no-store'
+    # Only add HSTS if already on HTTPS
+    if request.is_secure:
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return response
 
 db.init_app(app)
 
@@ -62,17 +129,33 @@ REDIS_RETRY_DELAY_S = 5
 DEFAULT_TAKEOFF_ALT = 10.0
 FLYING_ALTITUDE_THRESHOLD = 1.0
 LOW_BATTERY_THRESHOLD = 20.0
+EXTERNAL_TELEMETRY_STALE_AFTER_S = _env_float('LESNAR_EXTERNAL_TELEMETRY_STALE_AFTER_S', 5.0)
+COMMAND_CONFIRM_TIMEOUT_S = _env_float('LESNAR_COMMAND_CONFIRM_TIMEOUT_S', 2.5)
+SESSION_TTL_S = _env_int('LESNAR_SESSION_TTL_S', 1800)
+TELEMETRY_HISTORY_INTERVAL_TICKS = _env_int('LESNAR_TELEMETRY_HISTORY_INTERVAL_TICKS', 5)
 MAX_DRONE_ID_LENGTH = 128
 DRONE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_\-\.]+$')
 LAT_MIN, LAT_MAX = -90.0, 90.0
 LON_MIN, LON_MAX = -180.0, 180.0
 ALT_MIN, ALT_MAX = 0.0, 10000.0
-CONFIG_ALLOWED_KEYS = {'drone_settings', 'api_settings', 'ai_settings', 'logging'}
+CONFIG_ALLOWED_KEYS = {
+    'drone_settings',
+    'api_settings',
+    'ai_settings',
+    'logging',
+    'data_pipeline',
+    'simulation_settings',
+}
+
+_external_drone_ids: set[str] = set()
+_external_drone_last_seen_monotonic: dict[str, float] = {}
+_external_drone_prev_samples: dict[str, dict] = {}
+_auth_serializer: URLSafeTimedSerializer | None = None
 
 
 def _maybe_run_db_migrations():
     """Best-effort Alembic upgrade on startup (safe no-op after first run)."""
-    if os.environ.get('AUTO_MIGRATE', '1') != '1':
+    if not _env_bool('AUTO_MIGRATE', True):
         return
     try:
         from alembic import command
@@ -96,7 +179,7 @@ def _maybe_run_db_migrations():
 with app.app_context():
     _maybe_run_db_migrations()
 
-USE_AIRSIM = bool(int(os.environ.get('LESNAR_USE_AIRSIM', '0')))
+USE_AIRSIM = _env_bool('LESNAR_USE_AIRSIM', False)
 fleet = DroneFleet()
 airsim_adapter = None
 if USE_AIRSIM and AirSimAdapter is not None:
@@ -112,23 +195,238 @@ _START_TIME = _time.time()
 
 
 # --- Simple API-key auth (role-based) ---
-# If keys are unset, auth is disabled (keeps local non-docker usage working).
-_ADMIN_KEY = (os.environ.get('LESNAR_ADMIN_API_KEY') or '').strip()
-_OPERATOR_KEY = (os.environ.get('LESNAR_OPERATOR_API_KEY') or '').strip()
+# Security default is fail-closed: protected APIs require configured keys unless explicitly disabled.
+_REQUIRE_AUTH = _env_bool('LESNAR_REQUIRE_AUTH', True)
+_ADMIN_KEY = _env_str('LESNAR_ADMIN_API_KEY')
+_OPERATOR_KEY = _env_str('LESNAR_OPERATOR_API_KEY')
+_AUDIT_CHAIN_KEY = _env_str('LESNAR_AUDIT_CHAIN_KEY')
 
-_REDIS_HOST = (os.environ.get('REDIS_HOST') or '127.0.0.1').strip()
-_REDIS_PORT = int(os.environ.get('REDIS_PORT') or 6379)
+_WEAK_SECRET_VALUES = {
+    'example-password',
+    'example-admin-key',
+    'example-operator-key',
+    'replace-with-strong-random-secret',
+    'changeme',
+    'password',
+    'dev-secret',
+}
+
+_REDIS_HOST = _env_str('REDIS_HOST', '127.0.0.1')
+_REDIS_PORT = _env_int('REDIS_PORT', 6379)
+_ENABLE_DEMO_FLEET = _env_bool('LESNAR_ENABLE_DEMO_FLEET', False)
+
+# --- Brute-force / lockout state (in-memory, per IP+username) ---
+_FAILED_LOGINS: dict = {}  # key: "ip:username" → {'count': int, 'locked_until': float}
+_LOGIN_MAX_ATTEMPTS = _env_int('LESNAR_LOGIN_MAX_ATTEMPTS', 5)
+_LOGIN_LOCKOUT_S = _env_int('LESNAR_LOGIN_LOCKOUT_S', 300)   # 5-minute lockout
+_LOGIN_WINDOW_S  = _env_int('LESNAR_LOGIN_WINDOW_S', 60)
+_failed_logins_lock = threading.Lock()
+
+def _brute_check(ip: str, username: str) -> tuple[bool, float]:
+    """Return (is_locked, seconds_remaining)."""
+    key = f"{ip}:{username}"
+    with _failed_logins_lock:
+        rec = _FAILED_LOGINS.get(key)
+        if not rec:
+            return False, 0.0
+        now = time.time()
+        if rec.get('locked_until', 0) > now:
+            return True, round(rec['locked_until'] - now, 1)
+        return False, 0.0
+
+def _brute_record_failure(ip: str, username: str) -> None:
+    key = f"{ip}:{username}"
+    now = time.time()
+    with _failed_logins_lock:
+        rec = _FAILED_LOGINS.setdefault(key, {'count': 0, 'window_start': now, 'locked_until': 0.0})
+        if now - rec['window_start'] > _LOGIN_WINDOW_S:
+            rec['count'] = 0
+            rec['window_start'] = now
+        rec['count'] += 1
+        if rec['count'] >= _LOGIN_MAX_ATTEMPTS:
+            rec['locked_until'] = now + _LOGIN_LOCKOUT_S
+            logger.warning(f"SECURITY: Login lockout triggered for {key} after {rec['count']} attempts")
+
+def _brute_clear(ip: str, username: str) -> None:
+    key = f"{ip}:{username}"
+    with _failed_logins_lock:
+        _FAILED_LOGINS.pop(key, None)
+
+
+# --- Password hashing utility ---
+import os as _os
+import secrets as _secrets
+
+def _hash_password_pbkdf2(password: str, iterations: int = 390000) -> str:
+    """Hash a password with pbkdf2_sha256. Returns a portable hash string."""
+    salt = _secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations)
+    return f"pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}"
+
+
+# --- User file helpers (persist user CRUD to auth_users.json) ---
+def _users_file_path() -> Path | None:
+    p = (os.environ.get('LESNAR_AUTH_USERS_FILE') or '').strip()
+    return Path(p) if p else None
+
+def _reload_auth_users() -> None:
+    """Reload auth users from disk into the global cache."""
+    global _AUTH_USERS
+    _AUTH_USERS = _load_auth_users()
+
+def _persist_users(users_dict: dict) -> None:
+    fp = _users_file_path()
+    if fp is None:
+        raise RuntimeError('LESNAR_AUTH_USERS_FILE not configured; cannot persist users')
+    rows = list(users_dict.values())
+    # Never write plain-text passwords to disk
+    safe_rows = [{k: v for k, v in row.items() if k != 'password'} for row in rows]
+    content = json.dumps(safe_rows, indent=2, ensure_ascii=False)
+    # Write + fsync to ensure full content lands on the bind-mount
+    with open(fp, 'w', encoding='utf-8') as fh:
+        fh.write(content)
+        fh.flush()
+        import os as _os
+        _os.fsync(fh.fileno())
+    _reload_auth_users()
+
+
+def _is_demo_drone_id(drone_id: str | None) -> bool:
+    value = (drone_id or '').strip().upper()
+    return value.startswith('LESNAR-DEMO-')
 
 
 def _auth_enabled() -> bool:
-    return bool(_ADMIN_KEY or _OPERATOR_KEY)
+    return _REQUIRE_AUTH
 
-if not _auth_enabled():
-    logger.warning("API authentication is DISABLED (LESNAR_ADMIN_API_KEY / LESNAR_OPERATOR_API_KEY not set). "
-                   "Set these environment variables before deploying to production.")
+
+def _get_auth_serializer() -> URLSafeTimedSerializer:
+    global _auth_serializer
+    if _auth_serializer is None:
+        _auth_serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'], salt='lesnar-session-v1')
+    return _auth_serializer
+
+
+def _load_auth_users() -> dict:
+    users_file = (os.environ.get('LESNAR_AUTH_USERS_FILE') or '').strip()
+    if users_file:
+        try:
+            file_text = Path(users_file).read_text(encoding='utf-8')
+            data = json.loads(file_text)
+            if isinstance(data, list):
+                out = {}
+                for row in data:
+                    username = str((row or {}).get('username') or '').strip()
+                    if username:
+                        out[username] = row
+                if out:
+                    return out
+            elif isinstance(data, dict):
+                return data
+        except Exception as e:
+            logger.warning(f"Invalid LESNAR_AUTH_USERS_FILE ({users_file}): {e}")
+
+    raw = (os.environ.get('LESNAR_AUTH_USERS_JSON') or '').strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            out = {}
+            for row in data:
+                username = str((row or {}).get('username') or '').strip()
+                if username:
+                    out[username] = row
+            return out
+        if isinstance(data, dict):
+            return data
+    except Exception as e:
+        logger.warning(f"Invalid LESNAR_AUTH_USERS_JSON: {e}")
+    return {}
+
+
+_AUTH_USERS = _load_auth_users()
+
+
+def _check_password_hash(password_hash: str, password: str) -> bool:
+    if not password_hash:
+        return False
+    value = str(password_hash).strip()
+    if value.startswith('pbkdf2_sha256$'):
+        try:
+            _, iterations_raw, salt_hex, digest_hex = value.split('$', 3)
+            iterations = int(iterations_raw)
+            salt = bytes.fromhex(salt_hex)
+            expected = bytes.fromhex(digest_hex)
+            actual = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations)
+            return hmac.compare_digest(actual, expected)
+        except Exception:
+            return False
+    if _werkzeug_check_password_hash is None:
+        return False
+    try:
+        return bool(_werkzeug_check_password_hash(value, password))
+    except Exception:
+        return False
+
+
+def _authenticate_user(username: str, password: str):
+    row = _AUTH_USERS.get(username)
+    if not isinstance(row, dict):
+        return None
+    password_hash = str(row.get('password_hash') or '').strip()
+    plain = str(row.get('password') or '').strip()
+    if password_hash:
+        ok = _check_password_hash(password_hash, password)
+    else:
+        ok = bool(plain) and plain == password
+    if not ok:
+        return None
+    return {
+        'username': username,
+        'role': str(row.get('role') or 'viewer').strip().lower(),
+        'display_name': str(row.get('display_name') or username).strip(),
+    }
+
+if _REQUIRE_AUTH:
+    if not _ADMIN_KEY or not _OPERATOR_KEY:
+        raise RuntimeError(
+            'Auth is required but LESNAR_ADMIN_API_KEY and LESNAR_OPERATOR_API_KEY are not both set. '
+            'Set both keys or explicitly set LESNAR_REQUIRE_AUTH=0 for local-only development.'
+        )
+
+    weak_keys = []
+    for env_key, value in {
+        'LESNAR_ADMIN_API_KEY': _ADMIN_KEY,
+        'LESNAR_OPERATOR_API_KEY': _OPERATOR_KEY,
+        'FLASK_SECRET_KEY': (app.config.get('SECRET_KEY') or '').strip(),
+        'LESNAR_AUDIT_CHAIN_KEY': _AUDIT_CHAIN_KEY,
+    }.items():
+        if not value:
+            weak_keys.append(env_key)
+        elif value.strip().lower() in _WEAK_SECRET_VALUES:
+            weak_keys.append(env_key)
+
+    if weak_keys:
+        raise RuntimeError(
+            'Weak or missing secret values detected for: '
+            f'{weak_keys}. Replace placeholders with strong random secrets before startup.'
+        )
+else:
+    logger.warning(
+        'API authentication is explicitly DISABLED (LESNAR_REQUIRE_AUTH=0). '
+        'Only use this mode in isolated local development.'
+    )
 
 
 def _get_role_from_request() -> str | None:
+    bearer = (request.headers.get('Authorization') or '').strip()
+    if bearer.lower().startswith('bearer '):
+        token = bearer[7:].strip()
+        session_payload = _validate_session_token(token)
+        if session_payload:
+            request._lesnar_session = session_payload
+            return session_payload.get('role')
     key = (request.headers.get('X-API-Key') or '').strip()
     if not key:
         return None
@@ -139,8 +437,64 @@ def _get_role_from_request() -> str | None:
     return None
 
 
+def _get_request_actor() -> dict:
+    session = getattr(request, '_lesnar_session', None)
+    header_operator_id = (request.headers.get('X-Operator-Id') or '').strip() or None
+    header_role = (request.headers.get('X-Operator-Role') or '').strip().lower() or None
+    header_session_id = (request.headers.get('X-Session-Id') or '').strip() or None
+    if session:
+        return {
+            'operator_id': session.get('username') or header_operator_id,
+            'operator_role': session.get('role') or header_role,
+            'session_id': session.get('session_id') or header_session_id,
+            'auth_type': 'session',
+        }
+    key = (request.headers.get('X-API-Key') or '').strip()
+    if key == _ADMIN_KEY:
+        return {'operator_id': header_operator_id or 'api-admin', 'operator_role': 'admin', 'session_id': header_session_id, 'auth_type': 'api-key'}
+    if key == _OPERATOR_KEY:
+        return {'operator_id': header_operator_id or 'api-operator', 'operator_role': 'operator', 'session_id': header_session_id, 'auth_type': 'api-key'}
+    return {'operator_id': header_operator_id, 'operator_role': header_role, 'session_id': header_session_id, 'auth_type': 'anonymous'}
+
+
+def _issue_session_token(username: str, role: str, session_id: str) -> str:
+    serializer = _get_auth_serializer()
+    return serializer.dumps({'username': username, 'role': role, 'session_id': session_id})
+
+
+def _validate_session_token(token: str) -> dict | None:
+    if not token:
+        return None
+    serializer = _get_auth_serializer()
+    try:
+        payload = serializer.loads(token, max_age=SESSION_TTL_S)
+    except (BadSignature, SignatureExpired):
+        return None
+    session_id = str(payload.get('session_id') or '').strip()
+    if not session_id:
+        return None
+    try:
+        row = AuthSession.query.filter_by(session_id=session_id).one_or_none()
+        if row is None:
+            return None
+        now = datetime.utcnow()
+        if row.revoked_at is not None or row.expires_at <= now:
+            return None
+        row.last_seen_at = now
+        db.session.commit()
+        payload['username'] = row.username
+        payload['role'] = row.role
+        return payload
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return None
+
+
 def require_role(required: str):
-    order = {'operator': 1, 'admin': 2}
+    order = {'viewer': 0, 'operator': 1, 'admin': 2}
 
     def decorator(fn):
         @wraps(fn)
@@ -150,7 +504,7 @@ def require_role(required: str):
 
             role = _get_role_from_request()
             if role is None:
-                return jsonify({'success': False, 'error': 'Unauthorized (missing/invalid X-API-Key)'}), 401
+                return jsonify({'success': False, 'error': 'Unauthorized (missing/invalid credentials)'}), 401
 
             if order.get(role, 0) < order.get(required, 999):
                 return jsonify({'success': False, 'error': 'Forbidden'}), 403
@@ -200,27 +554,32 @@ def _validate_coordinates(lat, lon, alt=None) -> str | None:
 
 def _try_audit(drone_id, action, payload, success, error):
     try:
+        actor = _get_request_actor()
         safe_log_command(
             drone_id=drone_id,
             action=action,
             payload_json=json.dumps(payload) if payload is not None else None,
             success=success,
             error=error,
+            operator_id=actor.get('operator_id'),
+            operator_role=actor.get('operator_role'),
+            session_id=actor.get('session_id'),
         )
     except Exception:
         pass
 
 
-def _db_upsert_drone(drone_id: str, position_tuple: tuple | None):
+def _db_upsert_drone(drone_id: str, position_tuple: tuple | None, *, external: bool = False):
     row = Drone.query.filter_by(drone_id=drone_id).one_or_none()
     now = datetime.utcnow()
     home_position_json = json.dumps(list(position_tuple)) if position_tuple is not None else None
+    config_json = json.dumps({'source': 'external'}) if external else None
     if row is None:
         row = Drone(
             drone_id=drone_id,
             enabled=True,
             home_position_json=home_position_json,
-            config_json=None,
+            config_json=config_json,
             created_at=now,
             updated_at=now,
         )
@@ -229,6 +588,8 @@ def _db_upsert_drone(drone_id: str, position_tuple: tuple | None):
         row.enabled = True
         if home_position_json is not None:
             row.home_position_json = home_position_json
+        if external:
+            row.config_json = config_json
         row.updated_at = now
     db.session.commit()
 
@@ -286,6 +647,183 @@ def _db_update_latest_run_status(drone_id: str, status: str, *, ended: bool = Fa
     db.session.commit()
     return run
 
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_operational_boundary() -> list[list[float]]:
+    raw = (os.environ.get('LESNAR_OPERATIONAL_BOUNDARY') or '').strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        out = []
+        for row in data:
+            if isinstance(row, (list, tuple)) and len(row) >= 2:
+                lat = _safe_float(row[0], None)
+                lon = _safe_float(row[1], None)
+                if lat is not None and lon is not None:
+                    out.append([lat, lon])
+        return out
+    except Exception as e:
+        logger.warning(f"Invalid LESNAR_OPERATIONAL_BOUNDARY: {e}")
+        return []
+
+
+_OPERATIONAL_BOUNDARY = _load_operational_boundary()
+
+
+def _point_in_polygon(lat: float, lon: float, polygon: list[list[float]]) -> bool:
+    if len(polygon) < 3:
+        return True
+    inside = False
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        yi, xi = polygon[i][0], polygon[i][1]
+        yj, xj = polygon[j][0], polygon[j][1]
+        intersects = ((yi > lat) != (yj > lat)) and (lon < (xj - xi) * (lat - yi) / ((yj - yi) or 1e-12) + xi)
+        if intersects:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _validate_operational_boundary(lat: float, lon: float) -> str | None:
+    if not _OPERATIONAL_BOUNDARY:
+        return None
+    if not _point_in_polygon(float(lat), float(lon), _OPERATIONAL_BOUNDARY):
+        return 'target lies outside the operational boundary'
+    return None
+
+
+def _state_is_flying(state) -> bool:
+    altitude = _safe_float(getattr(state, 'altitude', 0.0))
+    speed = _safe_float(getattr(state, 'speed', 0.0))
+    armed = bool(getattr(state, 'armed', False))
+    mode = str(getattr(state, 'mode', '') or '').upper()
+    mode_tokens = ('TAKEOFF', 'OFFBOARD', 'MISSION', 'AUTO', 'LOITER', 'HOLD', 'RTL')
+    return altitude > FLYING_ALTITUDE_THRESHOLD or speed > 0.8 or any(token in mode for token in mode_tokens) or (armed and speed > 0.1)
+
+
+def _fleet_status_payload(states: list) -> dict:
+    return {
+        'total_drones': len(states),
+        'armed_drones': len([s for s in states if bool(getattr(s, 'armed', False))]),
+        'flying_drones': len([s for s in states if _state_is_flying(s)]),
+        'low_battery_drones': len([s for s in states if _safe_float(getattr(s, 'battery', 0.0)) < LOW_BATTERY_THRESHOLD]),
+    }
+
+
+def _is_external_drone(drone_id: str | None) -> bool:
+    return bool(drone_id) and drone_id in _external_drone_ids
+
+
+def _prune_stale_external_drones() -> None:
+    now = time.monotonic()
+    for drone_id in list(_external_drone_ids):
+        last_seen = _external_drone_last_seen_monotonic.get(drone_id)
+        if last_seen is None or (now - last_seen) <= EXTERNAL_TELEMETRY_STALE_AFTER_S:
+            continue
+        logger.warning(f"Pruning stale external drone {drone_id}: no telemetry for {now - last_seen:.1f}s")
+        try:
+            fleet.remove_drone(drone_id)
+        except Exception:
+            pass
+        _external_drone_ids.discard(drone_id)
+        _external_drone_last_seen_monotonic.pop(drone_id, None)
+        _external_drone_prev_samples.pop(drone_id, None)
+
+
+def _get_live_states() -> list:
+    _prune_stale_external_drones()
+    if airsim_adapter is not None:
+        adapter_states = airsim_adapter.get_all_states() or []
+        if adapter_states:
+            return adapter_states
+    return fleet.get_all_states()
+
+
+def _get_live_state(drone_id: str):
+    for state in _get_live_states():
+        if getattr(state, 'drone_id', None) == drone_id:
+            return state
+    return None
+
+
+def _wait_for_state(drone_id: str, predicate, timeout_s: float):
+    deadline = time.monotonic() + max(0.1, timeout_s)
+    last_state = _get_live_state(drone_id)
+    while time.monotonic() < deadline:
+        state = _get_live_state(drone_id)
+        if state is not None:
+            last_state = state
+            try:
+                if predicate(state):
+                    return True, state
+            except Exception:
+                pass
+        time.sleep(0.2)
+    return False, last_state
+
+
+def _state_to_dict(state):
+    if state is None:
+        return {}
+    payload = state.to_dict() if hasattr(state, 'to_dict') else dict(state)
+    drone_id = payload.get('drone_id') or getattr(state, 'drone_id', None)
+    payload['source'] = 'external' if _is_external_drone(drone_id) else 'simulated'
+    return payload
+
+
+def _command_result(drone_id: str, *, success: bool, message: str, state=None, accepted: bool = False, extra: dict | None = None, status_code: int | None = None):
+    payload = {
+        'success': bool(success),
+        'accepted': bool(accepted),
+        'confirmed': bool(success),
+        'message': message,
+        'state': _state_to_dict(state),
+    }
+    if extra:
+        payload.update(extra)
+    if status_code is None:
+        status_code = 202 if accepted and not success else 200
+    return jsonify(payload), status_code
+
+
+def _persist_telemetry_history(states: list) -> None:
+    if not states:
+        return
+    with app.app_context():
+        now = datetime.utcnow()
+        rows = []
+        for state in states:
+            source_ts = None
+            raw_ts = getattr(state, 'timestamp', None)
+            if raw_ts:
+                try:
+                    source_ts = datetime.fromisoformat(str(raw_ts).replace('Z', '+00:00')).replace(tzinfo=None)
+                except Exception:
+                    source_ts = None
+            rows.append(TelemetrySample(
+                drone_id=str(getattr(state, 'drone_id', '')),
+                latitude=_safe_float(getattr(state, 'latitude', 0.0)),
+                longitude=_safe_float(getattr(state, 'longitude', 0.0)),
+                altitude=_safe_float(getattr(state, 'altitude', 0.0)),
+                heading=_safe_float(getattr(state, 'heading', 0.0)),
+                speed=_safe_float(getattr(state, 'speed', 0.0)),
+                battery=_safe_float(getattr(state, 'battery', 0.0)),
+                armed=bool(getattr(state, 'armed', False)),
+                mode=str(getattr(state, 'mode', '') or ''),
+                source_timestamp=source_ts,
+                created_at=now,
+            ))
+        db.session.bulk_save_objects(rows)
+        db.session.commit()
+
 def _fetch_json(url, timeout_s=2.5):
     req = urllib.request.Request(
         url,
@@ -324,18 +862,325 @@ def db_health():
     except Exception as e:
         return _safe_error('Database health check failed', e)
 
+
+@app.route('/api/auth/login', methods=['POST'])
+@limiter.limit('20 per minute')
+def login():
+    """Issue a short-lived session token for configured operators/viewers/admins."""
+    try:
+        if not _AUTH_USERS:
+            return jsonify({'success': False, 'error': 'Session login is not configured on this deployment'}), 503
+        data = request.get_json() or {}
+        username = str(data.get('username') or '').strip()
+        password = str(data.get('password') or '')
+        if not username or not password:
+            return jsonify({'success': False, 'error': 'username and password required'}), 400
+
+        client_ip = request.remote_addr or '0.0.0.0'
+        locked, remaining = _brute_check(client_ip, username)
+        if locked:
+            logger.warning(f"SECURITY: Blocked login attempt for '{username}' from {client_ip} (locked {remaining}s remaining)")
+            return jsonify({'success': False, 'error': f'Account temporarily locked. Try again in {int(remaining)} seconds.'}), 429
+
+        user = _authenticate_user(username, password)
+        if user is None:
+            _brute_record_failure(client_ip, username)
+            # Constant-time response: do NOT reveal whether username exists
+            return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+
+        _brute_clear(client_ip, username)
+        session_id = uuid.uuid4().hex
+        now = datetime.utcnow()
+        expires_at = now + timedelta(seconds=SESSION_TTL_S)
+        db.session.add(AuthSession(
+            session_id=session_id,
+            username=user['username'],
+            role=user['role'],
+            issued_at=now,
+            expires_at=expires_at,
+            last_seen_at=now,
+            metadata_json=json.dumps({
+                'display_name': user.get('display_name'),
+                'remote_addr': client_ip,
+                'user_agent': request.headers.get('User-Agent'),
+            }),
+        ))
+        db.session.commit()
+        token = _issue_session_token(user['username'], user['role'], session_id)
+        safe_log_event('AUTH_LOGIN', payload={'username': user['username'], 'role': user['role']}, operator_id=user['username'], operator_role=user['role'], session_id=session_id)
+        return jsonify({
+            'success': True,
+            'token': token,
+            'session': {
+                'sessionId': session_id,
+                'userId': user['username'],
+                'role': user['role'],
+                'displayName': user.get('display_name') or user['username'],
+                'expiresAt': expires_at.isoformat(),
+            }
+        })
+    except Exception as e:
+        return _safe_error('Login failed', e)
+
+
+@app.route('/api/auth/me', methods=['GET'])
+def auth_me():
+    session = None
+    bearer = (request.headers.get('Authorization') or '').strip()
+    if bearer.lower().startswith('bearer '):
+        session = _validate_session_token(bearer[7:].strip())
+    if not session:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    row = AuthSession.query.filter_by(session_id=session.get('session_id')).one_or_none()
+    metadata = {}
+    try:
+        metadata = json.loads(row.metadata_json) if row and row.metadata_json else {}
+    except Exception:
+        metadata = {}
+    return jsonify({'success': True, 'session': {
+        'sessionId': session.get('session_id'),
+        'userId': session.get('username'),
+        'role': session.get('role'),
+        'displayName': metadata.get('display_name') or session.get('username'),
+        'expiresAt': row.expires_at.isoformat() if row else None,
+    }})
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    session = None
+    bearer = (request.headers.get('Authorization') or '').strip()
+    if bearer.lower().startswith('bearer '):
+        session = _validate_session_token(bearer[7:].strip())
+    if not session:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    row = AuthSession.query.filter_by(session_id=session.get('session_id')).one_or_none()
+    if row is None:
+        return jsonify({'success': False, 'error': 'Session not found'}), 404
+    row.revoked_at = datetime.utcnow()
+    db.session.commit()
+    safe_log_event('AUTH_LOGOUT', payload={'username': row.username, 'role': row.role}, operator_id=row.username, operator_role=row.role, session_id=row.session_id)
+    return jsonify({'success': True})
+
+
+# ---------------------------------------------------------------------------
+# User Management CRUD (admin only)
+# ---------------------------------------------------------------------------
+
+_ROLE_HIERARCHY = {'viewer': 0, 'operator': 1, 'admin': 2}
+_VALID_ROLES = set(_ROLE_HIERARCHY.keys())
+
+
+@app.route('/api/auth/users', methods=['GET'])
+@require_role('admin')
+def list_users():
+    """List all users (admin only). Passwords are never returned."""
+    try:
+        users = _load_auth_users()
+        result = [
+            {
+                'username': u,
+                'role': users[u].get('role', 'viewer'),
+                'display_name': users[u].get('display_name') or u,
+            }
+            for u in users
+        ]
+        result.sort(key=lambda x: (-_ROLE_HIERARCHY.get(x['role'], 0), x['username']))
+        return jsonify({'success': True, 'users': result, 'count': len(result)})
+    except Exception as e:
+        return _safe_error('Failed to list users', e)
+
+
+@app.route('/api/auth/users', methods=['POST'])
+@require_role('admin')
+def create_user():
+    """Create a new user (admin only)."""
+    try:
+        data = request.get_json() or {}
+        username = str(data.get('username') or '').strip().lower()
+        password = str(data.get('password') or '')
+        role = str(data.get('role') or 'viewer').strip().lower()
+        display_name = str(data.get('display_name') or username).strip()
+
+        if not username or len(username) < 3 or len(username) > 64:
+            return jsonify({'success': False, 'error': 'Username must be 3–64 characters'}), 400
+        if not re.match(r'^[a-z0-9_\-]+$', username):
+            return jsonify({'success': False, 'error': 'Username may only contain a-z, 0-9, _ or -'}), 400
+        if len(password) < 8:
+            return jsonify({'success': False, 'error': 'Password must be at least 8 characters'}), 400
+        if role not in _VALID_ROLES:
+            return jsonify({'success': False, 'error': f'Role must be one of: {", ".join(sorted(_VALID_ROLES))}'}), 400
+
+        users = _load_auth_users()
+        if username in users:
+            return jsonify({'success': False, 'error': 'Username already exists'}), 409
+
+        users[username] = {
+            'username': username,
+            'role': role,
+            'display_name': display_name,
+            'password_hash': _hash_password_pbkdf2(password),
+        }
+        _persist_users(users)
+        session_ctx = _validate_session_token((request.headers.get('Authorization') or '').replace('Bearer ', '').strip())
+        safe_log_event('USER_CREATED', payload={'target_user': username, 'role': role}, operator_id=session_ctx.get('username') if session_ctx else 'admin', operator_role='admin')
+        return jsonify({'success': True, 'user': {'username': username, 'role': role, 'display_name': display_name}}), 201
+    except Exception as e:
+        return _safe_error('Failed to create user', e)
+
+
+@app.route('/api/auth/users/<target_username>', methods=['PUT'])
+@require_role('admin')
+def update_user(target_username):
+    """Update an existing user's role, display name, or password (admin only)."""
+    try:
+        target_username = target_username.strip().lower()
+        users = _load_auth_users()
+        if target_username not in users:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+
+        data = request.get_json() or {}
+        if 'role' in data:
+            role = str(data['role']).strip().lower()
+            if role not in _VALID_ROLES:
+                return jsonify({'success': False, 'error': f'Role must be one of: {", ".join(sorted(_VALID_ROLES))}'}), 400
+            # Prevent an admin from demoting themselves
+            session_ctx = _validate_session_token((request.headers.get('Authorization') or '').replace('Bearer ', '').strip())
+            if session_ctx and session_ctx.get('username') == target_username and role != 'admin':
+                return jsonify({'success': False, 'error': 'Admins cannot demote themselves'}), 403
+            users[target_username]['role'] = role
+
+        if 'display_name' in data:
+            users[target_username]['display_name'] = str(data['display_name']).strip()[:128]
+
+        if 'password' in data:
+            new_pw = str(data['password'])
+            if len(new_pw) < 8:
+                return jsonify({'success': False, 'error': 'Password must be at least 8 characters'}), 400
+            users[target_username]['password_hash'] = _hash_password_pbkdf2(new_pw)
+            # Revoke all existing sessions for this user for security
+            now = datetime.utcnow()
+            AuthSession.query.filter_by(username=target_username).filter(AuthSession.revoked_at.is_(None)).update({'revoked_at': now})
+            db.session.commit()
+
+        _persist_users(users)
+        session_ctx = _validate_session_token((request.headers.get('Authorization') or '').replace('Bearer ', '').strip())
+        safe_log_event('USER_UPDATED', payload={'target_user': target_username, 'fields': list(data.keys())}, operator_id=session_ctx.get('username') if session_ctx else 'admin', operator_role='admin')
+        return jsonify({'success': True, 'user': {'username': target_username, 'role': users[target_username]['role'], 'display_name': users[target_username].get('display_name') or target_username}})
+    except Exception as e:
+        return _safe_error('Failed to update user', e)
+
+
+@app.route('/api/auth/users/<target_username>', methods=['DELETE'])
+@require_role('admin')
+def delete_user(target_username):
+    """Delete a user (admin only; cannot delete own account)."""
+    try:
+        target_username = target_username.strip().lower()
+        session_ctx = _validate_session_token((request.headers.get('Authorization') or '').replace('Bearer ', '').strip())
+        if session_ctx and session_ctx.get('username') == target_username:
+            return jsonify({'success': False, 'error': 'You cannot delete your own account'}), 403
+
+        users = _load_auth_users()
+        if target_username not in users:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+
+        # Count admins — must keep at least one
+        if users[target_username].get('role') == 'admin':
+            admin_count = sum(1 for u in users.values() if u.get('role') == 'admin')
+            if admin_count <= 1:
+                return jsonify({'success': False, 'error': 'Cannot delete the last admin account'}), 409
+
+        del users[target_username]
+        _persist_users(users)
+        # Revoke all sessions for deleted user
+        now = datetime.utcnow()
+        AuthSession.query.filter_by(username=target_username).filter(AuthSession.revoked_at.is_(None)).update({'revoked_at': now})
+        db.session.commit()
+        safe_log_event('USER_DELETED', payload={'target_user': target_username}, operator_id=session_ctx.get('username') if session_ctx else 'admin', operator_role='admin')
+        return jsonify({'success': True})
+    except Exception as e:
+        return _safe_error('Failed to delete user', e)
+
+
+# ---------------------------------------------------------------------------
+# Security Status Endpoint (for presentation / audit)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/security/status', methods=['GET'])
+@require_role('admin')
+def security_status():
+    """Return a summary of the active security configuration (admin only)."""
+    try:
+        import hashlib as _hl
+        users = _load_auth_users()
+        role_counts = {}
+        for u in users.values():
+            r = u.get('role', 'viewer')
+            role_counts[r] = role_counts.get(r, 0) + 1
+
+        # Audit chain health — count recent events
+        audit_health = 'ok'
+        try:
+            event_count = AuditEvent.query.count()
+            audit_health = f'ok ({event_count} events)'
+        except Exception:
+            audit_health = 'unavailable'
+
+        cors_origins = os.environ.get('CORS_ORIGINS', '*')
+
+        status = {
+            'auth': {
+                'method': 'PBKDF2-SHA256 (600000 iterations)',
+                'session_mechanism': 'itsdangerous TimestampSigner + DB revocation table',
+                'session_ttl_seconds': SESSION_TTL_S,
+                'roles': sorted(_VALID_ROLES, key=lambda r: _ROLE_HIERARCHY[r]),
+                'role_counts': role_counts,
+                'total_users': len(users),
+            },
+            'brute_force_protection': {
+                'enabled': True,
+                'max_attempts': _LOGIN_MAX_ATTEMPTS,
+                'window_seconds': _LOGIN_WINDOW_S,
+                'lockout_seconds': _LOGIN_LOCKOUT_S,
+                'currently_locked_ips': len(_FAILED_LOGINS),
+            },
+            'security_headers': [
+                'X-Content-Type-Options: nosniff',
+                'X-Frame-Options: DENY',
+                'X-XSS-Protection: 1; mode=block',
+                'Referrer-Policy: strict-origin-when-cross-origin',
+                'Permissions-Policy: geolocation=(), camera=(), microphone=()',
+                'Cache-Control: no-store',
+                'Strict-Transport-Security (HTTPS only)',
+            ],
+            'rate_limiting': {
+                'login': '20 per minute (flask-limiter)',
+            },
+            'cors': {
+                'allowed_origins': cors_origins,
+            },
+            'audit_log': {
+                'chain_status': audit_health,
+                'storage': 'TimescaleDB AuditEvent table',
+            },
+            'weak_secret_detection': 'enabled (startup check)',
+            'error_messages': 'sanitised — raw exceptions never exposed to client',
+        }
+        return jsonify({'success': True, 'security': status})
+    except Exception as e:
+        return _safe_error('Failed to retrieve security status', e)
+
+
 @app.route('/api/drones', methods=['GET'])
-@require_role('operator')
+@require_role('viewer')
 def get_drones():
     """Get list of all drones"""
     try:
-        if airsim_adapter is not None:
-            states = airsim_adapter.get_all_states()
-        else:
-            states = fleet.get_all_states()
+        states = _get_live_states()
         return jsonify({
             'success': True,
-            'drones': [state.to_dict() for state in states],
+            'drones': [_state_to_dict(state) for state in states],
             'count': len(states)
         })
     except Exception as e:
@@ -343,7 +1188,7 @@ def get_drones():
         return _safe_error('Failed to retrieve drones', e)
 
 @app.route('/api/drones/<drone_id>', methods=['GET'])
-@require_role('operator')
+@require_role('viewer')
 def get_drone(drone_id):
     """Get specific drone state"""
     try:
@@ -354,14 +1199,14 @@ def get_drone(drone_id):
             state = airsim_adapter.get_state(drone_id)
             if state is None:
                 return jsonify({'success': False, 'error': 'Drone not found'}), 404
-            return jsonify({'success': True, 'drone': state.to_dict(), 'obstacles': []})
+            return jsonify({'success': True, 'drone': _state_to_dict(state), 'obstacles': []})
         else:
             drone = fleet.get_drone(drone_id)
             if not drone:
                 return jsonify({'success': False, 'error': 'Drone not found'}), 404
             return jsonify({
                 'success': True,
-                'drone': drone.get_state().to_dict(),
+                'drone': _state_to_dict(drone.get_state()),
                 'obstacles': drone.obstacles_detected[-5:],
                 'mission': drone.get_mission_info() if hasattr(drone, 'get_mission_info') else None
             })
@@ -439,6 +1284,25 @@ def delete_drone(drone_id):
 def arm_drone(drone_id):
     """Arm a drone"""
     try:
+        live_state = _get_live_state(drone_id)
+        if _is_external_drone(drone_id):
+            if live_state is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            published = _publish_command(drone_id, 'arm')
+            if not published:
+                return jsonify({'success': False, 'error': 'No active external control subscriber for arm command'}), 503
+            success, state = _wait_for_state(drone_id, lambda s: bool(getattr(s, 'armed', False)), max(COMMAND_CONFIRM_TIMEOUT_S, 8.0))
+            _try_audit(drone_id, 'arm', None, bool(success), None if success else 'not_confirmed')
+            if success:
+                return _command_result(drone_id, success=True, message=f'Drone {drone_id} arm confirmed.', state=state)
+            return _command_result(
+                drone_id,
+                success=False,
+                accepted=True,
+                message=f'Arm command accepted for {drone_id}, but telemetry did not confirm arming.',
+                state=state,
+            )
+
         drone = fleet.get_drone(drone_id)
         if not drone:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
@@ -448,7 +1312,7 @@ def arm_drone(drone_id):
         return jsonify({
             'success': success,
             'message': f'Drone {drone_id} {"armed" if success else "failed to arm"}',
-            'state': drone.get_state().to_dict()
+            'state': _state_to_dict(drone.get_state())
         })
     
     except Exception as e:
@@ -460,6 +1324,25 @@ def arm_drone(drone_id):
 def disarm_drone(drone_id):
     """Disarm a drone"""
     try:
+        live_state = _get_live_state(drone_id)
+        if _is_external_drone(drone_id):
+            if live_state is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            published = _publish_command(drone_id, 'disarm')
+            if not published:
+                return jsonify({'success': False, 'error': 'No active external control subscriber for disarm command'}), 503
+            success, state = _wait_for_state(drone_id, lambda s: not bool(getattr(s, 'armed', False)), max(COMMAND_CONFIRM_TIMEOUT_S, 8.0))
+            _try_audit(drone_id, 'disarm', None, bool(success), None if success else 'not_confirmed')
+            if success:
+                return _command_result(drone_id, success=True, message=f'Drone {drone_id} disarm confirmed.', state=state)
+            return _command_result(
+                drone_id,
+                success=False,
+                accepted=True,
+                message=f'Disarm command accepted for {drone_id}, but telemetry did not confirm disarming.',
+                state=state,
+            )
+
         drone = fleet.get_drone(drone_id)
         if not drone:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
@@ -469,7 +1352,7 @@ def disarm_drone(drone_id):
         return jsonify({
             'success': success,
             'message': f'Drone {drone_id} {"disarmed" if success else "failed to disarm"}',
-            'state': drone.get_state().to_dict()
+            'state': _state_to_dict(drone.get_state())
         })
     
     except Exception as e:
@@ -477,7 +1360,7 @@ def disarm_drone(drone_id):
         return _safe_error('Failed to disarm drone', e)
 
 
-def _publish_command(drone_id: str, action: str, params: dict | None = None) -> None:
+def _publish_command(drone_id: str, action: str, params: dict | None = None) -> bool:
     """Publish a command to Redis for external agents (Teacher/real drones)."""
     try:
         r = redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, db=0, socket_timeout=2)
@@ -487,9 +1370,11 @@ def _publish_command(drone_id: str, action: str, params: dict | None = None) -> 
             'params': params or {},
             'timestamp': datetime.utcnow().isoformat(),
         }
-        r.publish('commands', json.dumps(cmd))
+        subscriber_count = int(r.publish('commands', json.dumps(cmd)))
+        return subscriber_count > 0
     except Exception as e:
         logger.warning(f"Failed to publish Redis command ({action} -> {drone_id}): {e}")
+        return False
 
 @app.route('/api/drones/<drone_id>/takeoff', methods=['POST'])
 @require_role('operator')
@@ -498,24 +1383,60 @@ def takeoff_drone(drone_id):
     try:
         data = request.get_json() or {}
         altitude = data.get('altitude', DEFAULT_TAKEOFF_ALT)
+        live_before = _get_live_state(drone_id)
+
+        if airsim_adapter is not None and live_before is None:
+            return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
 
         # Always publish to Redis (Teacher/real drones).
-        _publish_command(drone_id, 'takeoff', {'altitude': altitude})
+        published = _publish_command(drone_id, 'takeoff', {'altitude': altitude})
 
         if airsim_adapter is not None:
-            success = airsim_adapter.takeoff(drone_id, altitude)
-            _try_audit(drone_id, 'takeoff', {'altitude': altitude}, success, None)
-            return jsonify({
-                'success': success,
-                'message': f'Drone {drone_id} takeoff signal sent.',
-                'target_altitude': altitude,
-                'state': airsim_adapter.get_state(drone_id).to_dict() if airsim_adapter.get_state(drone_id) else {}
-            })
+            accepted = airsim_adapter.takeoff(drone_id, altitude)
+            success, state = _wait_for_state(
+                drone_id,
+                lambda s: _state_is_flying(s) and _safe_float(getattr(s, 'altitude', 0.0)) >= min(float(altitude), FLYING_ALTITUDE_THRESHOLD),
+                max(COMMAND_CONFIRM_TIMEOUT_S, 45.0),
+            )
+            _try_audit(drone_id, 'takeoff', {'altitude': altitude}, bool(success), None if success else 'not_confirmed')
+            if success:
+                return _command_result(drone_id, success=True, message=f'Drone {drone_id} takeoff confirmed.', state=state, extra={'target_altitude': altitude})
+            if accepted:
+                return _command_result(
+                    drone_id,
+                    success=False,
+                    accepted=True,
+                    message=f'Takeoff command accepted for {drone_id}, but no verified takeoff was observed.',
+                    state=state or live_before,
+                    extra={'target_altitude': altitude, 'control_link_active': published},
+                )
+            return jsonify({'success': False, 'error': f'Failed to send takeoff command to {drone_id}'}), 503
+
+        if _is_external_drone(drone_id):
+            if live_before is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            if not published:
+                return jsonify({'success': False, 'error': 'No active external control subscriber for takeoff command'}), 503
+            success, state = _wait_for_state(
+                drone_id,
+                lambda s: _state_is_flying(s) and _safe_float(getattr(s, 'altitude', 0.0)) >= min(float(altitude), FLYING_ALTITUDE_THRESHOLD),
+                max(COMMAND_CONFIRM_TIMEOUT_S, 45.0),
+            )
+            _try_audit(drone_id, 'takeoff', {'altitude': altitude}, bool(success), None if success else 'not_confirmed')
+            if success:
+                return _command_result(drone_id, success=True, message=f'Drone {drone_id} takeoff confirmed.', state=state, extra={'target_altitude': altitude})
+            return _command_result(
+                drone_id,
+                success=False,
+                accepted=True,
+                message=f'Takeoff command accepted for {drone_id}, but no verified takeoff was observed.',
+                state=state or live_before,
+                extra={'target_altitude': altitude},
+            )
 
         drone = fleet.get_drone(drone_id)
         if not drone:
-            # Redis-only drone: acknowledge command.
-            return jsonify({'success': True, 'message': f'Command published for {drone_id}', 'published': True})
+            return jsonify({'success': False, 'error': 'Drone not found'}), 404
 
         success = drone.takeoff(altitude)
         _try_audit(drone_id, 'takeoff', {'altitude': altitude}, bool(success), None if success else 'takeoff_failed')
@@ -523,7 +1444,7 @@ def takeoff_drone(drone_id):
             'success': success,
             'message': f'Drone {drone_id} {"taking off" if success else "failed to takeoff"}',
             'target_altitude': altitude,
-            'state': drone.get_state().to_dict()
+            'state': _state_to_dict(drone.get_state())
         })
 
     except Exception as e:
@@ -535,28 +1456,70 @@ def takeoff_drone(drone_id):
 def land_drone(drone_id):
     """Land a drone"""
     try:
+        live_before = _get_live_state(drone_id)
         # Always publish to Redis (Teacher/real drones).
-        _publish_command(drone_id, 'land')
+        published = _publish_command(drone_id, 'land')
 
         if airsim_adapter is not None:
-            success = airsim_adapter.land(drone_id)
-            _try_audit(drone_id, 'land', None, success, None)
-            return jsonify({
-                'success': success,
-                'message': f'Drone {drone_id} land signal sent.',
-                'state': airsim_adapter.get_state(drone_id).to_dict() if airsim_adapter.get_state(drone_id) else {}
-            })
+            if live_before is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            accepted = airsim_adapter.land(drone_id)
+            success, state = _wait_for_state(
+                drone_id,
+                lambda s: (
+                    _safe_float(getattr(s, 'altitude', 0.0)) <= FLYING_ALTITUDE_THRESHOLD
+                    or not bool(getattr(s, 'armed', True))
+                ),
+                max(COMMAND_CONFIRM_TIMEOUT_S, 20.0),
+            )
+            _try_audit(drone_id, 'land', None, bool(success), None if success else 'not_confirmed')
+            if success:
+                return _command_result(drone_id, success=True, message=f'Drone {drone_id} landing confirmed.', state=state)
+            if accepted:
+                return _command_result(
+                    drone_id,
+                    success=False,
+                    accepted=True,
+                    message=f'Land command accepted for {drone_id}, but landing was not verified.',
+                    state=state or live_before,
+                    extra={'control_link_active': published},
+                )
+            return jsonify({'success': False, 'error': f'Failed to send land command to {drone_id}'}), 503
+
+        if _is_external_drone(drone_id):
+            if live_before is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            if not published:
+                return jsonify({'success': False, 'error': 'No active external control subscriber for land command'}), 503
+            success, state = _wait_for_state(
+                drone_id,
+                lambda s: (
+                    _safe_float(getattr(s, 'altitude', 0.0)) <= FLYING_ALTITUDE_THRESHOLD
+                    or not bool(getattr(s, 'armed', True))
+                ),
+                max(COMMAND_CONFIRM_TIMEOUT_S, 20.0),
+            )
+            _try_audit(drone_id, 'land', None, bool(success), None if success else 'not_confirmed')
+            if success:
+                return _command_result(drone_id, success=True, message=f'Drone {drone_id} landing confirmed.', state=state)
+            return _command_result(
+                drone_id,
+                success=False,
+                accepted=True,
+                message=f'Land command accepted for {drone_id}, but landing was not verified.',
+                state=state or live_before,
+            )
 
         drone = fleet.get_drone(drone_id)
         if not drone:
-            return jsonify({'success': True, 'message': f'Command published for {drone_id}', 'published': True})
+            return jsonify({'success': False, 'error': 'Drone not found'}), 404
 
         success = drone.land()
         _try_audit(drone_id, 'land', None, bool(success), None if success else 'land_failed')
         return jsonify({
             'success': success,
             'message': f'Drone {drone_id} {"landing" if success else "failed to land"}',
-            'state': drone.get_state().to_dict()
+            'state': _state_to_dict(drone.get_state())
         })
 
     except Exception as e:
@@ -579,23 +1542,74 @@ def goto_drone(drone_id):
         coord_err = _validate_coordinates(latitude, longitude, altitude)
         if coord_err:
             return jsonify({'success': False, 'error': coord_err}), 400
+        boundary_err = _validate_operational_boundary(latitude, longitude)
+        if boundary_err:
+            return jsonify({'success': False, 'error': boundary_err}), 400
 
         # Always publish to Redis (Teacher/real drones).
-        _publish_command(drone_id, 'goto', {'latitude': latitude, 'longitude': longitude, 'altitude': altitude})
+        published = _publish_command(drone_id, 'goto', {'latitude': latitude, 'longitude': longitude, 'altitude': altitude})
+        live_before = _get_live_state(drone_id)
 
         if airsim_adapter is not None:
-            success = airsim_adapter.goto(drone_id, latitude, longitude, altitude)
-            _try_audit(drone_id, 'goto', {'latitude': latitude, 'longitude': longitude, 'altitude': altitude}, success, None)
-            return jsonify({
-                'success': success,
-                'message': f'Drone {drone_id} sent to ({latitude}, {longitude})',
-                'target': {'latitude': latitude, 'longitude': longitude, 'altitude': altitude},
-                'state': airsim_adapter.get_state(drone_id).to_dict() if airsim_adapter.get_state(drone_id) else {}
-            })
+            if live_before is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            accepted = airsim_adapter.goto(drone_id, latitude, longitude, altitude)
+            success, state = _wait_for_state(
+                drone_id,
+                lambda s: abs(_safe_float(getattr(s, 'latitude', 0.0)) - float(latitude)) > 0.00001 or abs(_safe_float(getattr(s, 'longitude', 0.0)) - float(longitude)) > 0.00001 or _safe_float(getattr(s, 'speed', 0.0)) > 0.5 or 'AUTO' in str(getattr(s, 'mode', '')).upper(),
+                COMMAND_CONFIRM_TIMEOUT_S,
+            )
+            _try_audit(drone_id, 'goto', {'latitude': latitude, 'longitude': longitude, 'altitude': altitude}, bool(success), None if success else 'not_confirmed')
+            if success:
+                return _command_result(
+                    drone_id,
+                    success=True,
+                    message=f'Drone {drone_id} navigation confirmed.',
+                    state=state,
+                    extra={'target': {'latitude': latitude, 'longitude': longitude, 'altitude': altitude}},
+                )
+            if accepted:
+                return _command_result(
+                    drone_id,
+                    success=False,
+                    accepted=True,
+                    message=f'Goto command accepted for {drone_id}, but movement was not confirmed.',
+                    state=state or live_before,
+                    extra={'target': {'latitude': latitude, 'longitude': longitude, 'altitude': altitude}, 'control_link_active': published},
+                )
+            return jsonify({'success': False, 'error': f'Failed to send goto command to {drone_id}'}), 503
+
+        if _is_external_drone(drone_id):
+            if live_before is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            if not published:
+                return jsonify({'success': False, 'error': 'No active external control subscriber for goto command'}), 503
+            success, state = _wait_for_state(
+                drone_id,
+                lambda s: abs(_safe_float(getattr(s, 'latitude', 0.0)) - float(latitude)) > 0.00001 or abs(_safe_float(getattr(s, 'longitude', 0.0)) - float(longitude)) > 0.00001 or _safe_float(getattr(s, 'speed', 0.0)) > 0.5 or 'AUTO' in str(getattr(s, 'mode', '')).upper(),
+                COMMAND_CONFIRM_TIMEOUT_S,
+            )
+            _try_audit(drone_id, 'goto', {'latitude': latitude, 'longitude': longitude, 'altitude': altitude}, bool(success), None if success else 'not_confirmed')
+            if success:
+                return _command_result(
+                    drone_id,
+                    success=True,
+                    message=f'Drone {drone_id} navigation confirmed.',
+                    state=state,
+                    extra={'target': {'latitude': latitude, 'longitude': longitude, 'altitude': altitude}},
+                )
+            return _command_result(
+                drone_id,
+                success=False,
+                accepted=True,
+                message=f'Goto command accepted for {drone_id}, but movement was not confirmed.',
+                state=state or live_before,
+                extra={'target': {'latitude': latitude, 'longitude': longitude, 'altitude': altitude}},
+            )
 
         drone = fleet.get_drone(drone_id)
         if not drone:
-            return jsonify({'success': True, 'message': f'Command published for {drone_id}', 'published': True})
+            return jsonify({'success': False, 'error': 'Drone not found'}), 404
         
         success = drone.goto(latitude, longitude, altitude)
         _try_audit(drone_id, 'goto', {'latitude': latitude, 'longitude': longitude, 'altitude': altitude}, bool(success), None if success else 'goto_failed')
@@ -603,7 +1617,7 @@ def goto_drone(drone_id):
             'success': success,
             'message': f'Drone {drone_id} {"navigating" if success else "failed to navigate"}',
             'target': {'latitude': latitude, 'longitude': longitude, 'altitude': altitude},
-            'state': drone.get_state().to_dict()
+            'state': _state_to_dict(drone.get_state())
         })
     
     except Exception as e:
@@ -615,7 +1629,7 @@ def goto_drone(drone_id):
 def execute_mission(drone_id):
     """Execute a mission"""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         waypoints = data.get('waypoints', [])
         mission_type = data.get('mission_type', 'CUSTOM')
 
@@ -630,16 +1644,11 @@ def execute_mission(drone_id):
             coord_err = _validate_coordinates(wp[0], wp[1], alt)
             if coord_err:
                 return jsonify({'success': False, 'error': f'waypoint {i}: {coord_err}'}), 400
+            boundary_err = _validate_operational_boundary(wp[0], wp[1])
+            if boundary_err:
+                return jsonify({'success': False, 'error': f'waypoint {i}: {boundary_err}'}), 400
 
-        drone = fleet.get_drone(drone_id)
-        if not drone:
-            return jsonify({'success': False, 'error': 'Drone not found'}), 404
-        
         estimated_duration = len(waypoints) * WAYPOINT_DURATION_ESTIMATE_S  # Rough estimate
-        mission = Mission(
-            waypoints=[tuple(wp) for wp in waypoints],
-            mission_type=mission_type,
-        )
 
         mission_id = None
         run_id = None
@@ -649,6 +1658,56 @@ def execute_mission(drone_id):
         except Exception as e:
             _try_audit(drone_id, 'mission_start', {'mission_type': mission_type, 'waypoints': waypoints}, False, f'db_error:{e}')
             return _safe_error('Failed to persist mission', e)
+
+        if _is_external_drone(drone_id):
+            live_before = _get_live_state(drone_id)
+            if live_before is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            published = _publish_command(drone_id, 'mission_start', {
+                'waypoints': waypoints,
+                'mission_type': mission_type,
+                'mission_run_id': run_id,
+            })
+            if not published:
+                try:
+                    with app.app_context():
+                        _db_update_latest_run_status(drone_id, 'FAILED', ended=True, error='no_external_subscriber')
+                except Exception:
+                    pass
+                return jsonify({'success': False, 'error': 'No active external control subscriber for mission command'}), 503
+            try:
+                with app.app_context():
+                    _db_update_latest_run_status(drone_id, 'RUNNING')
+                    safe_log_event('MISSION_STARTED', drone_id=drone_id, mission_run_id=run_id, payload={'mission_type': mission_type})
+            except Exception:
+                pass
+            _try_audit(drone_id, 'mission_start', {'mission_type': mission_type, 'waypoints': waypoints}, True, None)
+            try:
+                socketio.emit('mission_status', {'drone_id': drone_id, 'status': 'RUNNING'})
+            except Exception:
+                pass
+            return jsonify({
+                'success': True,
+                'accepted': True,
+                'confirmed': False,
+                'message': f'Mission uplink accepted for {drone_id}.',
+                'mission': {
+                    'waypoints': waypoints,
+                    'mission_type': mission_type,
+                    'estimated_duration': estimated_duration
+                },
+                'mission_run_id': run_id,
+                'state': _state_to_dict(live_before),
+            })
+
+        drone = fleet.get_drone(drone_id)
+        if not drone:
+            return jsonify({'success': False, 'error': 'Drone not found'}), 404
+
+        mission = Mission(
+            waypoints=[tuple(wp) for wp in waypoints],
+            mission_type=mission_type,
+        )
 
         success = drone.execute_mission(mission)
         if success:
@@ -676,7 +1735,7 @@ def execute_mission(drone_id):
                 'estimated_duration': estimated_duration
             },
             'mission_run_id': run_id,
-            'state': drone.get_state().to_dict()
+            'state': _state_to_dict(drone.get_state())
         })
     
     except Exception as e:
@@ -685,7 +1744,7 @@ def execute_mission(drone_id):
 
 
 @app.route('/api/missions/active', methods=['GET'])
-@require_role('operator')
+@require_role('viewer')
 def get_active_missions():
     """Get list of active/paused missions."""
     try:
@@ -708,9 +1767,38 @@ def get_active_missions():
         else:
             # Simulator mode: pull mission details directly.
             for drone in list(getattr(fleet, 'drones', {}).values()):
+                drone_id = getattr(drone, 'drone_id', None) or getattr(drone.get_state(), 'drone_id', None)
+                if not drone_id:
+                    continue
                 info = drone.get_mission_info() if hasattr(drone, 'get_mission_info') else None
                 if info:
                     missions.append(info)
+                    continue
+                if _is_external_drone(drone_id):
+                    latest = (
+                        MissionRun.query
+                        .filter(MissionRun.drone_id == drone_id, MissionRun.status.in_(['RUNNING', 'PAUSED']))
+                        .order_by(MissionRun.id.desc())
+                        .first()
+                    )
+                    if not latest:
+                        continue
+                    mission_row = MissionModel.query.filter(MissionModel.id == latest.mission_id).first()
+                    payload = {}
+                    try:
+                        payload = json.loads(mission_row.payload_json) if mission_row and mission_row.payload_json else {}
+                    except Exception:
+                        payload = {}
+                    waypoints = payload.get('waypoints') or []
+                    missions.append({
+                        'drone_id': drone_id,
+                        'mission_type': payload.get('mission_type') or (mission_row.mission_type if mission_row else 'CUSTOM'),
+                        'total_waypoints': len(waypoints),
+                        'current_waypoint_index': None,
+                        'estimated_remaining_s': max(0, len(waypoints) * int(WAYPOINT_DURATION_ESTIMATE_S)) if waypoints else None,
+                        'status': 'PAUSED' if latest.status == 'PAUSED' else 'ACTIVE',
+                        'started_at': latest.started_at.isoformat() if latest.started_at else latest.created_at.isoformat() if latest.created_at else None,
+                    })
         return jsonify({'success': True, 'missions': missions, 'count': len(missions)})
     except Exception as e:
         logger.error(f"Error getting active missions: {e}")
@@ -720,10 +1808,34 @@ def get_active_missions():
 @app.route('/api/drones/<drone_id>/mission/pause', methods=['POST'])
 @require_role('operator')
 def pause_mission(drone_id):
-    """Pause a mission (simulator mode only)."""
+    """Pause a mission."""
     try:
         if airsim_adapter is not None:
             return jsonify({'success': False, 'error': 'Mission pause not supported for AirSim adapter'}), 501
+        if _is_external_drone(drone_id):
+            live_before = _get_live_state(drone_id)
+            if live_before is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            if not _publish_command(drone_id, 'mission_pause'):
+                return jsonify({'success': False, 'error': 'No active external control subscriber for mission pause'}), 503
+            run = None
+            try:
+                with app.app_context():
+                    run = _db_update_latest_run_status(drone_id, 'PAUSED')
+                    safe_log_event('MISSION_PAUSED', drone_id=drone_id, mission_run_id=run.id if run else None)
+            except Exception:
+                pass
+            try:
+                socketio.emit('mission_status', {'drone_id': drone_id, 'status': 'PAUSED'})
+            except Exception:
+                pass
+            return jsonify({
+                'success': True,
+                'accepted': True,
+                'message': f'Drone {drone_id} pause command uplinked.',
+                'state': _state_to_dict(live_before),
+                'mission': fleet.get_drone(drone_id).get_mission_info() if fleet.get_drone(drone_id) else None,
+            })
         drone = fleet.get_drone(drone_id)
         if not drone:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
@@ -738,7 +1850,7 @@ def pause_mission(drone_id):
         return jsonify({
             'success': bool(ok),
             'message': f'Drone {drone_id} {"paused" if ok else "failed to pause"} mission',
-            'state': drone.get_state().to_dict(),
+            'state': _state_to_dict(drone.get_state()),
             'mission': drone.get_mission_info() if hasattr(drone, 'get_mission_info') else None,
         })
     except Exception as e:
@@ -749,10 +1861,34 @@ def pause_mission(drone_id):
 @app.route('/api/drones/<drone_id>/mission/resume', methods=['POST'])
 @require_role('operator')
 def resume_mission(drone_id):
-    """Resume a paused mission (simulator mode only)."""
+    """Resume a paused mission."""
     try:
         if airsim_adapter is not None:
             return jsonify({'success': False, 'error': 'Mission resume not supported for AirSim adapter'}), 501
+        if _is_external_drone(drone_id):
+            live_before = _get_live_state(drone_id)
+            if live_before is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            if not _publish_command(drone_id, 'mission_resume'):
+                return jsonify({'success': False, 'error': 'No active external control subscriber for mission resume'}), 503
+            run = None
+            try:
+                with app.app_context():
+                    run = _db_update_latest_run_status(drone_id, 'RUNNING')
+                    safe_log_event('MISSION_RESUMED', drone_id=drone_id, mission_run_id=run.id if run else None)
+            except Exception:
+                pass
+            try:
+                socketio.emit('mission_status', {'drone_id': drone_id, 'status': 'RUNNING'})
+            except Exception:
+                pass
+            return jsonify({
+                'success': True,
+                'accepted': True,
+                'message': f'Drone {drone_id} resume command uplinked.',
+                'state': _state_to_dict(live_before),
+                'mission': fleet.get_drone(drone_id).get_mission_info() if fleet.get_drone(drone_id) else None,
+            })
         drone = fleet.get_drone(drone_id)
         if not drone:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
@@ -767,7 +1903,7 @@ def resume_mission(drone_id):
         return jsonify({
             'success': bool(ok),
             'message': f'Drone {drone_id} {"resumed" if ok else "failed to resume"} mission',
-            'state': drone.get_state().to_dict(),
+            'state': _state_to_dict(drone.get_state()),
             'mission': drone.get_mission_info() if hasattr(drone, 'get_mission_info') else None,
         })
     except Exception as e:
@@ -778,10 +1914,34 @@ def resume_mission(drone_id):
 @app.route('/api/drones/<drone_id>/mission/stop', methods=['POST'])
 @require_role('operator')
 def stop_mission(drone_id):
-    """Stop/cancel a mission (simulator mode only)."""
+    """Stop/cancel a mission."""
     try:
         if airsim_adapter is not None:
             return jsonify({'success': False, 'error': 'Mission stop not supported for AirSim adapter'}), 501
+        if _is_external_drone(drone_id):
+            live_before = _get_live_state(drone_id)
+            if live_before is None:
+                return jsonify({'success': False, 'error': 'Live drone telemetry not found'}), 404
+            if not _publish_command(drone_id, 'mission_stop'):
+                return jsonify({'success': False, 'error': 'No active external control subscriber for mission stop'}), 503
+            run = None
+            try:
+                with app.app_context():
+                    run = _db_update_latest_run_status(drone_id, 'STOPPED', ended=True)
+                    safe_log_event('MISSION_STOPPED', drone_id=drone_id, mission_run_id=run.id if run else None)
+            except Exception:
+                pass
+            try:
+                socketio.emit('mission_status', {'drone_id': drone_id, 'status': 'STOPPED'})
+            except Exception:
+                pass
+            return jsonify({
+                'success': True,
+                'accepted': True,
+                'message': f'Drone {drone_id} stop command uplinked.',
+                'state': _state_to_dict(live_before),
+                'mission': None,
+            })
         drone = fleet.get_drone(drone_id)
         if not drone:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
@@ -796,7 +1956,7 @@ def stop_mission(drone_id):
         return jsonify({
             'success': bool(ok),
             'message': f'Drone {drone_id} {"stopped" if ok else "failed to stop"} mission',
-            'state': drone.get_state().to_dict(),
+            'state': _state_to_dict(drone.get_state()),
             'mission': drone.get_mission_info() if hasattr(drone, 'get_mission_info') else None,
         })
     except Exception as e:
@@ -823,29 +1983,88 @@ def emergency_land_all():
         return _safe_error('Emergency landing failed', e)
 
 @app.route('/api/telemetry', methods=['GET'])
-@require_role('operator')
+@require_role('viewer')
 def get_telemetry():
     """Get current telemetry data"""
     try:
-        states = fleet.get_all_states()
+        states = _get_live_states()
         return jsonify({
             'success': True,
-            'telemetry': [state.to_dict() for state in states],
+            'telemetry': [_state_to_dict(state) for state in states],
             'timestamp': datetime.now().isoformat(),
-            'fleet_status': {
-                'total_drones': len(states),
-                'armed_drones': len([s for s in states if s.armed]),
-                'flying_drones': len([s for s in states if s.altitude > FLYING_ALTITUDE_THRESHOLD]),
-                'low_battery_drones': len([s for s in states if s.battery < LOW_BATTERY_THRESHOLD])
-            }
+            'fleet_status': _fleet_status_payload(states)
         })
     
     except Exception as e:
         logger.error(f"Error getting telemetry: {e}")
         return _safe_error('Failed to retrieve telemetry', e)
 
+
+@app.route('/api/telemetry/history', methods=['GET'])
+@require_role('viewer')
+def get_telemetry_history():
+    """Return recent telemetry samples for replay/AAR."""
+    try:
+        drone_id = (request.args.get('drone_id') or '').strip() or None
+        limit = max(1, min(int(request.args.get('limit') or 500), 5000))
+        query = TelemetrySample.query
+        if drone_id:
+            query = query.filter(TelemetrySample.drone_id == drone_id)
+        rows = query.order_by(TelemetrySample.created_at.desc()).limit(limit).all()
+        rows.reverse()
+        return jsonify({'success': True, 'samples': [
+            {
+                'drone_id': row.drone_id,
+                'latitude': row.latitude,
+                'longitude': row.longitude,
+                'altitude': row.altitude,
+                'heading': row.heading,
+                'speed': row.speed,
+                'battery': row.battery,
+                'armed': row.armed,
+                'mode': row.mode,
+                'timestamp': (row.source_timestamp or row.created_at).isoformat(),
+                'created_at': row.created_at.isoformat(),
+            }
+            for row in rows
+        ]})
+    except Exception as e:
+        return _safe_error('Failed to retrieve telemetry history', e)
+
+
+@app.route('/api/drones/<drone_id>/history', methods=['GET'])
+@require_role('viewer')
+def get_drone_history(drone_id):
+    try:
+        limit = max(1, min(int(request.args.get('limit') or 500), 5000))
+        rows = (
+            TelemetrySample.query
+            .filter(TelemetrySample.drone_id == drone_id)
+            .order_by(TelemetrySample.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        rows.reverse()
+        return jsonify({'success': True, 'drone_id': drone_id, 'samples': [
+            {
+                'latitude': row.latitude,
+                'longitude': row.longitude,
+                'altitude': row.altitude,
+                'heading': row.heading,
+                'speed': row.speed,
+                'battery': row.battery,
+                'armed': row.armed,
+                'mode': row.mode,
+                'timestamp': (row.source_timestamp or row.created_at).isoformat(),
+                'created_at': row.created_at.isoformat(),
+            }
+            for row in rows
+        ]})
+    except Exception as e:
+        return _safe_error('Failed to retrieve drone history', e)
+
 @app.route('/api/obstacles', methods=['GET'])
-@require_role('operator')
+@require_role('viewer')
 def get_obstacles():
     """Get static obstacles GeoJSON"""
     try:
@@ -911,7 +2130,7 @@ def geocode_reverse():
         return _safe_error('Reverse geocoding failed', e)
 
 @app.route('/api/health', methods=['GET'])
-@require_role('operator')
+@require_role('viewer')
 def health():
     """Return a minimal health report for the backend service."""
     try:
@@ -992,6 +2211,10 @@ def health():
             },
             'features': {
                 'airsim_adapter_enabled': USE_AIRSIM and (airsim_adapter is not None),
+                'computer_vision': bool(((cfg or {}).get('ai_settings') or {}).get('computer_vision_enabled')),
+                'obstacle_avoidance': bool(((cfg or {}).get('ai_settings') or {}).get('obstacle_avoidance_enabled')),
+                'swarm_intelligence': bool(((cfg or {}).get('ai_settings') or {}).get('swarm_intelligence_enabled')),
+                'segmentation_enabled': bool(seg_info.get('enabled')),
             },
             'segmentation': seg_info,
             'airsim_rpc_ok': rpc_ok,
@@ -1002,7 +2225,7 @@ def health():
         return _safe_error('Health check failed', e)
 
 @app.route('/api/config', methods=['GET'])
-@require_role('admin')
+@require_role('viewer')
 def get_config():
     """Return current repo config.json contents."""
     try:
@@ -1053,9 +2276,9 @@ def update_config():
         return _safe_error('Failed to update configuration', e)
 
 @app.route('/api/logs/segmentation/latest', methods=['GET'])
-@require_role('operator')
+@require_role('viewer')
 def get_latest_segmentation_log():
-    """Return latest segmentation diagnostics CSV as JSON rows (limited)."""
+    """Return latest segmentation diagnostics CSV as JSON rows (most recent SEG_LOG_MAX_ROWS)."""
     try:
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         logs_dir = Path(os.path.join(repo_root, 'logs'))
@@ -1065,15 +2288,15 @@ def get_latest_segmentation_log():
         if not candidates:
             return jsonify({'success': False, 'error': 'no segmentation logs found'}), 404
         latest = candidates[0]
-        rows = []
-        import csv
+        import csv as _csv_mod
+        all_rows = []
         with open(latest, 'r', newline='') as f:
-            rdr = csv.DictReader(f)
-            for i, row in enumerate(rdr):
-                rows.append(row)
-                if i >= SEG_LOG_MAX_ROWS:
-                    break
-        return jsonify({'success': True, 'file': str(latest), 'rows': rows})
+            rdr = _csv_mod.DictReader(f)
+            for row in rdr:
+                all_rows.append(row)
+        # Return only the most recent rows so the UI shows live detections
+        rows = all_rows[-SEG_LOG_MAX_ROWS:] if len(all_rows) > SEG_LOG_MAX_ROWS else all_rows
+        return jsonify({'success': True, 'file': latest.name, 'rows': rows})
     except Exception as e:
         logger.error(f"Error reading latest segmentation log: {e}")
         return _safe_error('Failed to read segmentation logs', e)
@@ -1102,16 +2325,11 @@ def broadcast_telemetry():
     sync_tick = 0
     while not _telemetry_stop.is_set():
         try:
-            states = fleet.get_all_states()
+            states = _get_live_states()
             telemetry_data = {
-                'telemetry': [state.to_dict() for state in states],
+                'telemetry': [_state_to_dict(state) for state in states],
                 'timestamp': datetime.now().isoformat(),
-                'fleet_status': {
-                    'total_drones': len(states),
-                    'armed_drones': len([s for s in states if s.armed]),
-                    'flying_drones': len([s for s in states if s.altitude > FLYING_ALTITUDE_THRESHOLD]),
-                    'low_battery_drones': len([s for s in states if s.battery < LOW_BATTERY_THRESHOLD])
-                }
+                'fleet_status': _fleet_status_payload(states)
             }
 
             socketio.emit('telemetry_update', telemetry_data)
@@ -1120,6 +2338,7 @@ def broadcast_telemetry():
             sync_tick = (sync_tick + 1) % DB_SYNC_INTERVAL
             if sync_tick == 0:
                 try:
+                    _persist_telemetry_history(states)
                     if airsim_adapter is None:
                         with app.app_context():
                             for drone in list(getattr(fleet, 'drones', {}).values()):
@@ -1134,6 +2353,9 @@ def broadcast_telemetry():
                                     .first()
                                 )
                                 if not latest:
+                                    continue
+
+                                if _is_external_drone(drone_id):
                                     continue
 
                                 if info is None:
@@ -1202,12 +2424,14 @@ def redis_bridge_loop():
                     data = json.loads(raw)
                     drone_id = data.get('drone_id')
                     if drone_id:
+                        _external_drone_ids.add(drone_id)
+                        _external_drone_last_seen_monotonic[drone_id] = time.monotonic()
                          # Ensure drone exists
                         if not fleet.get_drone(drone_id):
                             logger.info(f"Discovered external drone via Redis: {drone_id}")
                             # Auto-add to DB so it persists
                             with app.app_context():
-                                _db_upsert_drone(drone_id, (data.get('latitude',0), data.get('longitude',0), 0))
+                                _db_upsert_drone(drone_id, (data.get('latitude',0), data.get('longitude',0), 0), external=True)
                             # Add to fleet but stop internal sim loop immediately.
                             fleet.add_drone(drone_id, (data.get('latitude', 0), data.get('longitude', 0), data.get('altitude', 0)))
                             try:
@@ -1219,17 +2443,49 @@ def redis_bridge_loop():
                     
                     drone = fleet.get_drone(drone_id)
                     if drone:
+                        prev_lat = _safe_float(data.get('latitude', drone.position[0]), drone.position[0])
+                        prev_lon = _safe_float(data.get('longitude', drone.position[1]), drone.position[1])
+                        prev_alt = _safe_float(data.get('altitude', drone.position[2]), drone.position[2])
+                        now_mono = time.monotonic()
+                        prev_sample = _external_drone_prev_samples.get(drone_id)
+                        derived_speed = None
+                        if prev_sample is not None:
+                            dt = max(0.001, now_mono - prev_sample['t'])
+                            lat_m = (prev_lat - prev_sample['lat']) * 111000.0
+                            lon_m = (prev_lon - prev_sample['lon']) * 111000.0 * max(0.1, abs(math.cos(math.radians(prev_lat))))
+                            alt_m = prev_alt - prev_sample['alt']
+                            derived_speed = math.sqrt(lat_m ** 2 + lon_m ** 2 + alt_m ** 2) / dt
+                        _external_drone_prev_samples[drone_id] = {'lat': prev_lat, 'lon': prev_lon, 'alt': prev_alt, 't': now_mono}
                         # Update state directly (Source of Truth is now Redis)
                         drone.position = [
-                            float(data.get('latitude', drone.position[0])),
-                            float(data.get('longitude', drone.position[1])),
-                            float(data.get('altitude', drone.position[2]))
+                            prev_lat,
+                            prev_lon,
+                            prev_alt
                         ]
                         drone.heading = float(data.get('heading', drone.heading))
-                        drone.speed = float(data.get('speed', drone.speed))
+                        reported_speed = data.get('speed', None)
+                        if reported_speed is None:
+                            drone.speed = float(derived_speed if derived_speed is not None else drone.speed)
+                        else:
+                            reported_speed = _safe_float(reported_speed, drone.speed)
+                            drone.speed = float(derived_speed if reported_speed <= 0.05 and derived_speed is not None else reported_speed)
                         if 'battery' in data: drone.battery = float(data['battery'])
                         if 'armed' in data: drone.armed = bool(data['armed'])
                         if 'mode' in data: drone.mode = str(data['mode'])
+                        drone.is_flying = bool(data.get('in_air', drone.is_flying or prev_alt > FLYING_ALTITUDE_THRESHOLD or drone.speed > 0.8))
+                        mission_status = data.get('mission_status')
+                        if mission_status in ('ACTIVE', 'PAUSED'):
+                            drone.external_mission_info = {
+                                'drone_id': drone_id,
+                                'mission_type': data.get('mission_type') or 'CUSTOM',
+                                'total_waypoints': int(data.get('total_waypoints') or 0),
+                                'current_waypoint_index': int(data.get('current_waypoint_index') or 0),
+                                'estimated_remaining_s': int(data.get('estimated_remaining_s') or 0),
+                                'status': mission_status,
+                                'started_at': data.get('started_at'),
+                            }
+                        else:
+                            drone.external_mission_info = None
                         # Ensure internal sim loop stays stopped.
                         drone.running = False
                 except Exception as e:
@@ -1252,13 +2508,24 @@ def start_redis_bridge():
 
 # Initialize some demo drones
 def initialize_demo_fleet():
-    """Initialize demo drones for testing"""
+    """Initialize fleet from DB and optionally seed demo drones."""
     logger.info("Initializing drone fleet...")
     try:
         with app.app_context():
             enabled = Drone.query.filter_by(enabled=True).all()
             if enabled:
+                loaded_count = 0
                 for row in enabled:
+                    if _is_demo_drone_id(row.drone_id) and not _ENABLE_DEMO_FLEET:
+                        row.enabled = False
+                        continue
+                    try:
+                        row_cfg = json.loads(row.config_json) if row.config_json else {}
+                    except Exception:
+                        row_cfg = {}
+                    if row_cfg.get('source') == 'external':
+                        logger.info(f"Skipping persisted external drone {row.drone_id} until live telemetry resumes")
+                        continue
                     pos = None
                     try:
                         if row.home_position_json:
@@ -1268,12 +2535,23 @@ def initialize_demo_fleet():
                     except Exception:
                         pos = None
                     fleet.add_drone(row.drone_id, pos)
-                logger.info(f"Loaded {len(enabled)} drones from DB")
-                return
+                    loaded_count += 1
+                try:
+                    db.session.commit()
+                except Exception:
+                    pass
+
+                if loaded_count > 0:
+                    logger.info(f"Loaded {loaded_count} drones from DB")
+                    return
     except Exception as e:
         logger.warning(f"Failed loading drones from DB: {e}")
 
-    # If DB is empty/unavailable, seed a demo fleet.
+    if not _ENABLE_DEMO_FLEET:
+        logger.info("Demo fleet disabled (LESNAR_ENABLE_DEMO_FLEET=0). Waiting for real telemetry drones.")
+        return
+
+    # If DB is empty/unavailable and demo mode enabled, seed a demo fleet.
     fleet.add_drone("LESNAR-DEMO-01", (40.7128, -74.0060, 0))  # NYC
     fleet.add_drone("LESNAR-DEMO-02", (40.7589, -73.9851, 0))  # Times Square
     fleet.add_drone("LESNAR-DEMO-03", (40.6892, -74.0445, 0))  # Statue of Liberty

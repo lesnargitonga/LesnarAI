@@ -1,6 +1,9 @@
-# RL Depth-Avoid Scaffold (AirSim + PPO)
+# RL Depth-Avoid Scaffold
 
-NOTE: This is a legacy AirSim-based RL scaffold. AirSim assets/env were moved under `legacy/`.
+> **STATUS: LEGACY — AirSim-based.** AirSim assets/env were moved under `legacy/`.  
+> The current RL workflow uses PX4 + Gazebo. See `training/README.md` for the canonical pipeline.
+
+---
 
 This folder gives you a minimal reinforcement learning setup that doesn't reinvent the stack:
 - A Gymnasium environment wrapping AirSim depth images for navigation (`airsim_gym_env.py`).

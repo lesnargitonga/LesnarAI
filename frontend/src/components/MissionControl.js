@@ -1,24 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import {
-  Navigation,
-  MapPin,
-  Clock,
-  Pause,
-  Play,
   Square,
   Shield,
-  Zap,
   Target,
   Cpu,
   Layers,
-  ChevronRight,
   TrendingUp,
   AlertTriangle
 } from 'lucide-react';
-import { MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from 'react-leaflet';
+import { MapContainer, Marker, Polygon, Polyline, TileLayer, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { useDrones } from '../context/DroneContext';
+import { getDroneFlags } from '../utils/droneState';
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_FALLBACK_URL, MAP_TILE_URL, OPERATIONAL_BOUNDARY } from '../config';
+import { normalizeBoundary, pointInPolygon } from '../utils/operational';
+import { subscribeQuickSelect } from './TacticalHotkeys';
 
 function WaypointClickCapture({ onAdd }) {
   useMapEvents({
@@ -37,8 +34,8 @@ function formatRemaining(seconds) {
   return `${m}:${String(r).padStart(2, '0')}`;
 }
 
-function MissionControl({ socket }) {
-  const { drones, fetchDrones, executeMission, takeoffDrone } = useDrones();
+function MissionControl({ socket, linkMetrics }) {
+  const { drones, executeMission, takeoffDrone, isDroneControlAllowed } = useDrones();
 
   const [selectedDroneId, setSelectedDroneId] = useState('');
   const [actionBanner, setActionBanner] = useState(null);
@@ -48,21 +45,19 @@ function MissionControl({ socket }) {
   const [missionDefaultAlt, setMissionDefaultAlt] = useState(10);
   const [missionWaypoints, setMissionWaypoints] = useState([]); // [{lat,lng,alt}]
 
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [savedTemplates, setSavedTemplates] = useState([]);
-  const [selectedTemplateName, setSelectedTemplateName] = useState('');
-
   const [activeMissions, setActiveMissions] = useState([]);
   const [missionsLoading, setMissionsLoading] = useState(false);
 
   const selectedDrone = useMemo(() => drones.find(d => d.drone_id === selectedDroneId) || null, [drones, selectedDroneId]);
-  const selectedIsFlying = Boolean(selectedDrone && Number(selectedDrone.altitude || 0) > 1);
+  const selectedIsFlying = Boolean(selectedDrone && getDroneFlags(selectedDrone).flying);
+  const selectedIsArmed = Boolean(selectedDrone && getDroneFlags(selectedDrone).armed);
+  const selectedDroneIsExternal = selectedDrone?.source === 'external';
+  const missionExecutionSupported = Boolean(selectedDrone);
+  const hasMissionPlan = missionWaypoints.length > 0;
+  const boundary = useMemo(() => normalizeBoundary(OPERATIONAL_BOUNDARY), []);
+  const selectedTelemetryStale = !selectedDrone || !isDroneControlAllowed(selectedDrone);
 
   useEffect(() => {
-    // Load templates
-    const raw = window.localStorage.getItem('lesnar.missions.templates');
-    setSavedTemplates(raw ? JSON.parse(raw) : []);
-
     if (socket) {
       socket.on('mission_status', () => refreshActiveMissions());
       return () => socket.off('mission_status');
@@ -72,6 +67,10 @@ function MissionControl({ socket }) {
   useEffect(() => {
     if (!selectedDroneId && drones.length > 0) setSelectedDroneId(drones[0].drone_id);
   }, [drones, selectedDroneId]);
+
+  useEffect(() => subscribeQuickSelect((droneId) => {
+    if (droneId) setSelectedDroneId(droneId);
+  }), []);
 
   const refreshActiveMissions = async () => {
     setMissionsLoading(true);
@@ -116,16 +115,27 @@ function MissionControl({ socket }) {
       setMissionType('TACT_SWEEP');
     }
 
+    if (boundary.length > 2 && gen.some((pt) => !pointInPolygon([pt.lat, pt.lng], boundary))) {
+      setActionBanner({ type: 'error', message: 'Generated pattern exceeds operational geocage.' });
+      return;
+    }
+
     setMissionWaypoints(gen);
   };
 
   return (
     <div className="p-8 space-y-10 fade-in">
+      {linkMetrics?.degradedMode && (
+        <div className="rounded-2xl border border-lesnar-warning/30 bg-lesnar-warning/10 px-6 py-4 flex items-center justify-between">
+          <p className="text-[10px] font-mono text-lesnar-warning uppercase">Degraded link mode active. Mission planning retained, command trust reduced.</p>
+          <span className="text-[10px] font-mono text-gray-300 uppercase">RTT {linkMetrics?.latencyMs ?? '—'}ms</span>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between border-l-2 border-lesnar-accent pl-6 py-2">
         <div>
           <h1 className="text-3xl font-black text-white uppercase tracking-tighter">
-            Mission Control <span className="text-lesnar-accent">// COMMAND</span>
+            Mission Control <span className="text-lesnar-accent">COMMAND</span>
           </h1>
           <p className="text-xs font-mono text-gray-500 uppercase tracking-widest mt-1">
             Tactical Operations Planning & Execution
@@ -138,6 +148,7 @@ function MissionControl({ socket }) {
           }`}>
           <AlertTriangle className="h-5 w-5 shrink-0" />
           <p className="text-xs font-mono font-bold uppercase">{actionBanner.message}</p>
+          <button onClick={() => setActionBanner(null)} className="ml-auto text-gray-400 hover:text-white">×</button>
         </div>
       )}
 
@@ -150,7 +161,14 @@ function MissionControl({ socket }) {
                 <div className="h-10 w-10 bg-lesnar-accent/10 border border-lesnar-accent/30 rounded-xl flex items-center justify-center neo-glow">
                   <Cpu className="h-6 w-6 text-lesnar-accent" />
                 </div>
-                <h2 className="text-xl font-black text-white uppercase tracking-tight">Mission Engine</h2>
+                <div>
+                  <h2 className="text-xl font-black text-white uppercase tracking-tight">Mission Engine</h2>
+                  {selectedDroneIsExternal && (
+                    <p className="text-[9px] font-mono text-lesnar-accent uppercase tracking-widest mt-1">
+                      External bridge asset detected. Live waypoint mission control is enabled.
+                    </p>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center space-x-4">
@@ -183,10 +201,23 @@ function MissionControl({ socket }) {
                   zoomControl={false}
                   className="w-full h-full filter grayscale brightness-50 contrast-125"
                 >
-                  <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+                  <TileLayer attribution={MAP_TILE_ATTRIBUTION} url={MAP_TILE_URL || MAP_TILE_FALLBACK_URL} />
                   <WaypointClickCapture
-                    onAdd={(ll) => setMissionWaypoints(prev => ([...prev, { lat: ll.lat, lng: ll.lng, alt: missionDefaultAlt }]))}
+                    onAdd={(ll) => {
+                      if (boundary.length > 2 && !pointInPolygon([ll.lat, ll.lng], boundary)) {
+                        setActionBanner({ type: 'error', message: 'OUT OF BOUNDS: waypoint rejected by operational geocage.' });
+                        return;
+                      }
+                      setMissionWaypoints(prev => ([...prev, { lat: ll.lat, lng: ll.lng, alt: missionDefaultAlt }]));
+                    }}
                   />
+
+                  {boundary.length > 2 && (
+                    <Polygon
+                      positions={boundary}
+                      pathOptions={{ color: '#FFCE00', weight: 2, fillOpacity: 0.08, dashArray: '6, 6' }}
+                    />
+                  )}
 
                   {missionWaypoints.length > 0 && (
                     <Polyline
@@ -198,7 +229,7 @@ function MissionControl({ socket }) {
                   {missionWaypoints.map((w, idx) => (
                     <Marker key={idx} position={[w.lat, w.lng]} icon={L.divIcon({
                       className: 'wp-marker',
-                      html: `<div class="w-4 h-4 rounded-full border-2 border-lesnar-accent bg-lesnar-accent/20 flex items-center justify-center text-[8px] font-bold text-white shadow-[0_0_10px_rgba(0,253,255,0.5)]">${idx + 1}</div>`,
+                      html: `<div style="width:16px;height:16px;border-radius:999px;border:2px solid #00FDFF;background:rgba(0,253,255,0.2);display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;box-shadow:0 0 10px rgba(0,253,255,0.5)">${idx + 1}</div>`,
                       iconSize: [16, 16]
                     })} />
                   ))}
@@ -217,13 +248,20 @@ function MissionControl({ socket }) {
                     </div>
                   </div>
                   <button onClick={() => setMissionWaypoints([])} className="glass-dark border border-white/5 p-3 rounded-xl text-lesnar-danger pointer-events-auto hover:bg-lesnar-danger/10 transition-all">
-                    Reset Plane
+                    Reset Plan
                   </button>
                 </div>
               </div>
 
               {/* Mission Params */}
               <div className="space-y-6">
+                {selectedDroneIsExternal && (
+                  <div className="rounded-2xl border border-lesnar-accent/30 bg-lesnar-accent/10 px-4 py-3">
+                    <p className="text-[10px] font-mono text-lesnar-accent uppercase tracking-widest">
+                      Bridge-connected PX4 asset detected. Plans execute through the live external mission bridge.
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-4">
                   <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest border-b border-white/5 pb-2">Operation Parameters</h3>
                   <div className="grid grid-cols-2 gap-4">
@@ -257,11 +295,11 @@ function MissionControl({ socket }) {
                           <div className="flex space-x-4">
                             <div className="flex items-center space-x-1.5">
                               <div className="h-1.5 w-1.5 rounded-full bg-lesnar-accent" />
-                              <span className="text-[8px] font-mono text-gray-500 uppercase">Sorties</span>
+                              <span className="text-[8px] font-mono text-gray-500 uppercase">{w.lat.toFixed(5)}</span>
                             </div>
                             <div className="flex items-center space-x-1.5">
                               <div className="h-1.5 w-1.5 rounded-full bg-lesnar-success" />
-                              <span className="text-[8px] font-mono text-gray-500 uppercase">Battery</span>
+                              <span className="text-[8px] font-mono text-gray-500 uppercase">{w.lng.toFixed(5)}</span>
                             </div>
                           </div>
                         </div>
@@ -282,39 +320,61 @@ function MissionControl({ socket }) {
                 </div>
 
                 <div className="pt-4 space-y-3">
-                  <button
-                    disabled={missionWaypoints.length === 0 || pending}
-                    onClick={async () => {
-                      setPending(true);
-                      const payload = missionWaypoints.map(w => [w.lat, w.lng, Number(w.alt)]);
-                      await executeMission(selectedDrone.drone_id, payload, missionType);
-                      setPending(false);
-                      refreshActiveMissions();
-                    }}
-                    className="w-full py-4 bg-lesnar-accent/10 border border-lesnar-accent/30 rounded-2xl text-xs font-black text-lesnar-accent uppercase tracking-widest hover:bg-lesnar-accent/20 transition-all disabled:opacity-30 neo-glow"
-                  >
-                    Initiate Deployment
-                  </button>
-                  <button
-                    disabled={selectedIsFlying || !selectedDrone?.armed || pending || missionWaypoints.length === 0}
-                    onClick={async () => {
-                      if (!selectedDrone) return;
-                      setPending(true);
-                      try {
-                        await takeoffDrone(selectedDrone.drone_id, missionDefaultAlt);
-                        const payload = missionWaypoints.map(w => [w.lat, w.lng, Number(w.alt)]);
-                        await executeMission(selectedDrone.drone_id, payload, missionType);
-                        refreshActiveMissions();
-                      } catch (err) {
-                        setActionBanner({ type: 'error', message: `Auto-launch failed: ${err.message || 'unknown error'}` });
-                      } finally {
-                        setPending(false);
-                      }
-                    }}
-                    className="w-full py-4 bg-lesnar-success/10 border border-lesnar-success/30 rounded-2xl text-xs font-black text-lesnar-success uppercase tracking-widest hover:bg-lesnar-success/20 transition-all disabled:opacity-30"
-                  >
-                    Auto-Launch + Mission
-                  </button>
+                  {hasMissionPlan && (
+                    <button
+                      disabled={!selectedDrone || pending || selectedTelemetryStale || !missionExecutionSupported}
+                      onClick={async () => {
+                        if (!selectedDrone) {
+                          setActionBanner({ type: 'error', message: 'Select a target asset before mission launch.' });
+                          return;
+                        }
+                        if (selectedTelemetryStale) {
+                          setActionBanner({ type: 'error', message: 'Mission lockout: selected drone telemetry is stale.' });
+                          return;
+                        }
+                        setPending(true);
+                        try {
+                          const payload = missionWaypoints.map(w => [w.lat, w.lng, Number(w.alt)]);
+                          await executeMission(selectedDrone.drone_id, payload, missionType);
+                          setActionBanner({ type: 'success', message: `Mission uplinked to ${selectedDrone.drone_id}` });
+                          refreshActiveMissions();
+                        } catch (err) {
+                          setActionBanner({ type: 'error', message: `Mission uplink failed: ${err.message || 'unknown error'}` });
+                        } finally {
+                          setPending(false);
+                        }
+                      }}
+                      className="w-full py-4 bg-lesnar-accent/10 border border-lesnar-accent/30 rounded-2xl text-xs font-black text-lesnar-accent uppercase tracking-widest hover:bg-lesnar-accent/20 transition-all disabled:opacity-30 neo-glow"
+                    >
+                      Initiate Deployment
+                    </button>
+                  )}
+                  {hasMissionPlan && selectedDrone && selectedIsArmed && !selectedIsFlying && (
+                    <button
+                      disabled={pending || selectedTelemetryStale || !missionExecutionSupported}
+                      onClick={async () => {
+                        if (!selectedDrone) return;
+                        if (selectedTelemetryStale) {
+                          setActionBanner({ type: 'error', message: 'Auto-launch lockout: selected drone telemetry is stale.' });
+                          return;
+                        }
+                        setPending(true);
+                        try {
+                          await takeoffDrone(selectedDrone.drone_id, missionDefaultAlt);
+                          const payload = missionWaypoints.map(w => [w.lat, w.lng, Number(w.alt)]);
+                          await executeMission(selectedDrone.drone_id, payload, missionType);
+                          refreshActiveMissions();
+                        } catch (err) {
+                          setActionBanner({ type: 'error', message: `Auto-launch failed: ${err.message || 'unknown error'}` });
+                        } finally {
+                          setPending(false);
+                        }
+                      }}
+                      className="w-full py-4 bg-lesnar-success/10 border border-lesnar-success/30 rounded-2xl text-xs font-black text-lesnar-success uppercase tracking-widest hover:bg-lesnar-success/20 transition-all disabled:opacity-30"
+                    >
+                      Auto-Launch + Mission
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -340,10 +400,17 @@ function MissionControl({ socket }) {
             </div>
 
             <div className="flex-1 space-y-6 overflow-y-auto pr-2 scrollbar-hide">
-              {activeMissions.length === 0 ? (
+              {missionsLoading ? (
+                <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-40">
+                  <TrendingUp className="h-8 w-8 text-gray-500 animate-pulse" />
+                  <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">Syncing mission status...</p>
+                </div>
+              ) : activeMissions.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-30">
                   <Shield className="h-12 w-12 text-gray-500" />
-                  <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">No Active Combat Sorties</p>
+                  <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">
+                    No Active Combat Sorties
+                  </p>
                 </div>
               ) : (
                 activeMissions.map((m) => (
@@ -368,16 +435,25 @@ function MissionControl({ socket }) {
                     </div>
 
                     <div className="space-y-2">
-                      <div className="flex justify-between text-[8px] font-mono text-gray-500 uppercase">
-                        <span>Waypoint Progression</span>
-                        <span>{(m.current_waypoint_index / m.total_waypoints * 100).toFixed(0)}%</span>
-                      </div>
-                      <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-lesnar-success transition-all duration-1000"
-                          style={{ width: `${(m.current_waypoint_index / m.total_waypoints * 100) || 0}%` }}
-                        />
-                      </div>
+                      {(() => {
+                        const total = Math.max(Number(m.total_waypoints) || 0, 1);
+                        const current = Math.max(0, Number(m.current_waypoint_index) || 0);
+                        const pct = Math.max(0, Math.min(100, (current / total) * 100));
+                        return (
+                          <>
+                            <div className="flex justify-between text-[8px] font-mono text-gray-500 uppercase">
+                              <span>Waypoint Progression</span>
+                              <span>{pct.toFixed(0)}%</span>
+                            </div>
+                            <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-lesnar-success transition-all duration-1000"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
 
                     <div className="flex space-x-3 pt-4 opacity-0 group-hover:opacity-100 transition-opacity">

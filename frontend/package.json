@@ -31,7 +31,9 @@
     "postcss": "^8.4.24"
   },
   "scripts": {
-    "start": "HOST=0.0.0.0 react-scripts start",
+    "start": "bash ../scripts/start_frontend_guarded.sh",
+    "start:raw": "HOST=0.0.0.0 react-scripts start",
+    "start:clean": "bash ../scripts/start_frontend_guarded.sh",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

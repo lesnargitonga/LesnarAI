@@ -1,0 +1,1 @@
+{"algorithm": "sha256+hmac-sha256", "entry_hash": "5a1188f5bfd444584a2e0f6f5cfac9f1e3dc0cbe2c973c93dd880927c3dbc0ec", "kind": "self_test", "payload": {"status": "ok"}, "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000", "seq": 1, "signature": "1c079f3c0abb8264c2d8d5f29b34ac8e91505a640c0dae1995eda5afc3325edd", "ts": "2026-03-06T13:17:07.496374+00:00"}
