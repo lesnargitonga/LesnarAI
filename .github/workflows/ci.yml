@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-python:
+    name: Python lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install linting tools
+        run: pip install flake8 pylint
+      - name: flake8
+        run: |
+          flake8 backend/ scripts/ training/ shared/ \
+            --max-line-length=100 \
+            --extend-ignore=E203,W503,E501 \
+            --exclude=__pycache__,migrations,*.pyc
+
+  lint-frontend:
+    name: Frontend lint & build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint --if-present
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  backend-smoke:
+    name: Backend import check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        run: |
+          pip install flask flask-socketio flask-sqlalchemy flask-migrate \
+            redis psycopg2-binary gunicorn sqlalchemy alembic python-dotenv \
+            flask-cors gevent gevent-websocket
+      - name: Check backend imports
+        run: python3 -c "import backend.app; print('backend.app OK')"
+        env:
+          FLASK_ENV: testing
+          LESNAR_EXTERNAL_ONLY: '1'
+          DATABASE_URL: sqlite:///test.db
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: ci-test-secret

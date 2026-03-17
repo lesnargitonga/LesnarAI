@@ -402,11 +402,20 @@ class Map:
         py,
         rel_alt,
         heading_map_deg,
-        lookahead_m=12.0,
+        route_ux=0.0,
+        route_uy=0.0,
+        lookahead_m=14.0,
         corridor_deg=65.0,
-        safety_margin_m=1.4,
+        safety_margin_m=2.0,
         vertical_clearance_m=1.2,
     ):
+        """Return (escape_x, escape_y, min_clearance, max_threat).
+
+        The escape vector blends pure repulsion with a tangential component that
+        slides the drone around the obstacle rather than slamming into it.  The
+        tangent direction is chosen to be the one that most closely aligns with
+        the current route, so the drone takes the shortest detour.
+        """
         repel_x = 0.0
         repel_y = 0.0
         min_clearance = lookahead_m
@@ -435,13 +444,37 @@ class Map:
             dir_away_x = -vec_to_obs_x / center_dist
             dir_away_y = -vec_to_obs_y / center_dist
 
+            # Tangential escape: two perpendiculars to the repulsion vector.
+            # Pick the one that best aligns with the current route so the drone
+            # slides smoothly around the obstacle toward the goal.
+            tan1_x, tan1_y = -dir_away_y, dir_away_x
+            tan2_x, tan2_y = dir_away_y, -dir_away_x
+            t1_align = tan1_x * route_ux + tan1_y * route_uy
+            t2_align = tan2_x * route_ux + tan2_y * route_uy
+            if t1_align >= t2_align:
+                tan_x, tan_y = tan1_x, tan1_y
+            else:
+                tan_x, tan_y = tan2_x, tan2_y
+
+            # alpha scales from 0 (pure repulsion when inside safety margin)
+            # to 0.6 (strong tangential component when there is clearance room).
+            alpha = clamp(clearance / max(1e-6, safety_margin_m * 1.5), 0.0, 0.60)
+            esc_x = (1.0 - alpha) * dir_away_x + alpha * tan_x
+            esc_y = (1.0 - alpha) * dir_away_y + alpha * tan_y
+            esc_norm = math.hypot(esc_x, esc_y)
+            if esc_norm > 1e-6:
+                esc_x /= esc_norm
+                esc_y /= esc_norm
+            else:
+                esc_x, esc_y = dir_away_x, dir_away_y
+
             threat_dist = clamp((lookahead_m - clearance) / max(1e-6, lookahead_m), 0.0, 1.0)
             heading_weight = clamp(math.cos(math.radians(rel_bearing)), 0.0, 1.0)
             size_weight = clamp(obs.horizontal_size_m() / 4.0, 0.5, 2.0)
             threat = threat_dist * heading_weight * size_weight
 
-            repel_x += threat * dir_away_x
-            repel_y += threat * dir_away_y
+            repel_x += threat * esc_x
+            repel_y += threat * esc_y
             min_clearance = min(min_clearance, clearance)
             max_threat = max(max_threat, threat)
 
@@ -899,7 +932,7 @@ async def collect_data(args):
 
     world_map = Map(args.sdf_path)
     log("--> Map loaded.")
-    grid = GridMap(world_map.obstacles, resolution=1.0, margin=1.5)
+    grid = GridMap(world_map.obstacles, resolution=1.0, margin=2.5)
     log("--> Grid ready.")
 
     # --- Redis Setup (Bridge) ---
@@ -1223,6 +1256,7 @@ async def collect_data(args):
     last_geom_clearance_m = 20.0
     front_min_filtered = 20.0
     front_blocked_since = None
+    threat_trigger_since = None
     goal_set_at = time.time()
     last_replan_at = 0.0
     unstable_since = None
@@ -1410,6 +1444,26 @@ async def collect_data(args):
                     stride = 2 if args.precision_mode else 3
                     current_path = path[::stride] + [path[-1]]
                     path_index = 0
+
+                    # Validate that no waypoint in the downsampled path grazes
+                    # an obstacle within the safety margin.  If the path is
+                    # compromised, request a fresh replan immediately.
+                    path_clear = True
+                    for _wp in current_path:
+                        for _obs in world_map.obstacles:
+                            if _obs.distance_to_point(_wp[0], _wp[1]) < float(args.obstacle_safety_margin_m):
+                                path_clear = False
+                                break
+                        if not path_clear:
+                            break
+                    if not path_clear:
+                        print("Path grazes obstacle — replanning to safer goal.")
+                        goal_x, goal_y = pick_new_goal()
+                        goal_set_at = time.time()
+                        last_replan_at = now
+                        current_path = []
+                        continue
+
                     print(f"Path found! {len(current_path)} waypoints")
 
             speed_now = math.sqrt(dstate.vx * dstate.vx + dstate.vy * dstate.vy)
@@ -1500,16 +1554,43 @@ async def collect_data(args):
             ]
             front_min_raw = float(np.min(front_slice)) if len(front_slice) else min_dist
 
+            _rux = (dx / dist) if dist > 1e-6 else 0.0
+            _ruy = (dy / dist) if dist > 1e-6 else 0.0
             avoid_x, avoid_y, geom_clearance_m, geom_threat = world_map.obstacle_avoidance_field(
                 px,
                 py,
                 dstate.rel_alt,
                 map_yaw_deg,
+                route_ux=_rux,
+                route_uy=_ruy,
                 lookahead_m=float(args.obstacle_lookahead_m),
                 corridor_deg=float(args.obstacle_corridor_deg),
                 safety_margin_m=float(args.obstacle_safety_margin_m),
                 vertical_clearance_m=float(args.obstacle_height_clearance_m),
             )
+
+            # Proactive threat-triggered replan: when the avoidance field
+            # reports a sustained high threat (obstacle in our path that A*
+            # didn't fully clear), replan immediately rather than waiting for
+            # the stall-strike counter to accumulate.
+            if geom_threat >= 0.85:
+                if threat_trigger_since is None:
+                    threat_trigger_since = now
+                elif (
+                    (now - threat_trigger_since) >= 0.5
+                    and (now - last_replan_at) >= float(args.replan_cooldown_sec)
+                    and not (args.bridge_only and external_mission and external_mission.get("status") == "ACTIVE")
+                ):
+                    print(f"High obstacle threat ({geom_threat:.2f}) → proactive replan")
+                    path = astar(grid, (px, py), (goal_x, goal_y))
+                    if path:
+                        stride = 2 if args.precision_mode else 3
+                        current_path = path[::stride] + [path[-1]]
+                        path_index = 0
+                    last_replan_at = now
+                    threat_trigger_since = None
+            else:
+                threat_trigger_since = None
             last_geom_clearance_m = geom_clearance_m
 
             # Front-distance robustness: reject clear sensor artifacts and debounce hard-stop decisions.
@@ -1551,7 +1632,12 @@ async def collect_data(args):
                 avoid_ux = 0.0
                 avoid_uy = 0.0
 
-            avoid_blend = clamp(float(args.avoidance_gain) * geom_threat, 0.0, float(args.max_avoidance_blend))
+            # Allow full avoidance override when threat is critical (≥ 0.9);
+            # otherwise cap at max_avoidance_blend to preserve route-following.
+            if geom_threat >= 0.90:
+                avoid_blend = 1.0
+            else:
+                avoid_blend = clamp(float(args.avoidance_gain) * geom_threat, 0.0, float(args.max_avoidance_blend))
             nav_ux = ((1.0 - avoid_blend) * route_ux) + (avoid_blend * avoid_ux)
             nav_uy = ((1.0 - avoid_blend) * route_uy) + (avoid_blend * avoid_uy)
             nav_norm = math.hypot(nav_ux, nav_uy)
@@ -2195,7 +2281,7 @@ async def collect_data(args):
 # --- MAIN (OFFLINE) ---
 def collect_data_offline(args):
     world_map = Map(args.sdf_path)
-    grid = GridMap(world_map.obstacles, resolution=1.0, margin=1.5)
+    grid = GridMap(world_map.obstacles, resolution=1.0, margin=2.5)
 
     f = open(args.out, "w", newline="", encoding="utf-8")
     writer = csv.writer(f)
@@ -2383,12 +2469,12 @@ if __name__ == "__main__":
     parser.add_argument("--heading_stop_forward_mps", type=float, default=0.18, help="Maximum forward speed when yaw error is above the heading stop threshold.")
     parser.add_argument("--heading_slow_forward_scale", type=float, default=0.45, help="Forward speed multiplier in the heading-alignment slow zone.")
     parser.add_argument("--heading_slow_lateral_scale", type=float, default=0.08, help="Lateral speed multiplier in the heading-alignment slow zone.")
-    parser.add_argument("--obstacle_lookahead_m", type=float, default=12.0, help="Geometry obstacle lookahead distance in meters.")
+    parser.add_argument("--obstacle_lookahead_m", type=float, default=14.0, help="Geometry obstacle lookahead distance in meters.")
     parser.add_argument("--obstacle_corridor_deg", type=float, default=65.0, help="Forward corridor half-angle for geometry avoidance.")
-    parser.add_argument("--obstacle_safety_margin_m", type=float, default=1.4, help="Extra obstacle volume margin in meters.")
+    parser.add_argument("--obstacle_safety_margin_m", type=float, default=2.0, help="Extra obstacle volume margin in meters.")
     parser.add_argument("--obstacle_height_clearance_m", type=float, default=1.2, help="Ignore obstacles lower than altitude minus this clearance.")
-    parser.add_argument("--avoidance_gain", type=float, default=0.95, help="Gain for geometry threat to route/avoidance blending.")
-    parser.add_argument("--max_avoidance_blend", type=float, default=0.70, help="Upper bound on avoidance blending factor.")
+    parser.add_argument("--avoidance_gain", type=float, default=1.2, help="Gain for geometry threat to route/avoidance blending.")
+    parser.add_argument("--max_avoidance_blend", type=float, default=0.85, help="Upper bound on avoidance blending factor (ceiling ignored at threat >= 0.9).")
     parser.add_argument("--max_lateral_accel_mps2", type=float, default=2.0, help="Max lateral acceleration command magnitude.")
     parser.add_argument("--max_tilt_deg", type=float, default=12.0, help="Maximum target lateral tilt angle for smooth maneuvering.")
     parser.add_argument("--max_roll_guard_deg", type=float, default=30.0, help="Trigger recovery if absolute roll exceeds this (deg).")
