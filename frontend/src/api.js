@@ -42,8 +42,14 @@ const api = axios.create({
 
 const ORCHESTRATOR_BASE_URL = process.env.REACT_APP_ORCHESTRATOR_URL || 'http://127.0.0.1:8765';
 
+function orchFetch(url, options = {}, timeoutMs = 10000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 export async function orchestratorStatus() {
-    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/status`, {
+    const res = await orchFetch(`${ORCHESTRATOR_BASE_URL}/status`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
     });
@@ -54,7 +60,7 @@ export async function orchestratorStatus() {
 }
 
 export async function orchestratorModels() {
-    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/models`, {
+    const res = await orchFetch(`${ORCHESTRATOR_BASE_URL}/models`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
     });
@@ -66,7 +72,7 @@ export async function orchestratorModels() {
 
 export async function orchestratorLaunchAll(droneCount = 1, teacherArgs = null, options = {}) {
     const { gzHeadless } = options;
-    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/launch-all`, {
+    const res = await orchFetch(`${ORCHESTRATOR_BASE_URL}/launch-all`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -74,7 +80,7 @@ export async function orchestratorLaunchAll(droneCount = 1, teacherArgs = null, 
             ...(Array.isArray(teacherArgs) && teacherArgs.length ? { teacher_args: teacherArgs } : {}),
             ...(typeof gzHeadless === 'boolean' ? { gz_headless: gzHeadless } : {})
         })
-    });
+    }, 30000);
     if (!res.ok) {
         throw new Error('Runtime orchestrator launch failed');
     }
@@ -82,7 +88,7 @@ export async function orchestratorLaunchAll(droneCount = 1, teacherArgs = null, 
 }
 
 export async function orchestratorKillAll() {
-    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/kill-all`, {
+    const res = await orchFetch(`${ORCHESTRATOR_BASE_URL}/kill-all`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
     });
@@ -93,7 +99,7 @@ export async function orchestratorKillAll() {
 }
 
 export async function orchestratorStartTraining({ epochs = 20, batchSize = 128, csvIndex = 0 } = {}) {
-    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/train/start`, {
+    const res = await orchFetch(`${ORCHESTRATOR_BASE_URL}/train/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -101,7 +107,7 @@ export async function orchestratorStartTraining({ epochs = 20, batchSize = 128, 
             batch_size: batchSize,
             csv_index: csvIndex,
         }),
-    });
+    }, 30000);
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) {
         const msg = payload?.error || payload?.message || 'Runtime orchestrator training start failed';

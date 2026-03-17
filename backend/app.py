@@ -1951,7 +1951,10 @@ def send_drone_command(drone_id):
         if not action or not isinstance(action, str):
             return jsonify({'success': False, 'error': 'action field is required'}), 400
         params = {k: v for k, v in data.items() if k not in ('action', 'operator_context')}
-        published = _publish_command(drone_id, action, params)
+        try:
+            published = _publish_command(drone_id, action, params)
+        except Exception:
+            return jsonify({'success': False, 'error': 'Redis unavailable'}), 503
         return jsonify({
             'success': True,
             'accepted': published,

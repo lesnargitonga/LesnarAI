@@ -2621,13 +2621,17 @@ async def collect_data(args):
                                     log(f"!! Land failed: {e}")
 
                             elif action == 'goto':
-                                target_lat = float(payload['params']['latitude'])
-                                target_lon = float(payload['params']['longitude'])
-                                if not offboard_active:
-                                    await ensure_offboard_started()
-                                external_mission = None
-                                set_goal_from_global(target_lat, target_lon)
-                                log(f"--> Override Goal: {goal_x:.1f}, {goal_y:.1f}")
+                                gp = (payload.get('params') or {})
+                                if 'latitude' not in gp or 'longitude' not in gp:
+                                    log("!! goto command missing latitude/longitude — ignored")
+                                else:
+                                    target_lat = float(gp['latitude'])
+                                    target_lon = float(gp['longitude'])
+                                    if not offboard_active:
+                                        await ensure_offboard_started()
+                                    external_mission = None
+                                    set_goal_from_global(target_lat, target_lon)
+                                    log(f"--> Override Goal: {goal_x:.1f}, {goal_y:.1f}")
 
                             elif action == 'mission_start':
                                 params = payload.get('params') or {}
