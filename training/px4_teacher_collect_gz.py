@@ -17,6 +17,13 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 try:
+    import torch
+    from torch import nn
+except ImportError:
+    torch = None
+    nn = None
+
+try:
     import redis.asyncio as redis
     import redis as sync_redis
 except ImportError:
@@ -561,6 +568,68 @@ class GridMap:
             return 0.0
         return float(self.clearance[gx, gy]) * self.res
 
+    def mark_dynamic_obstacle(self, wx: float, wy: float, radius_cells: int = 2) -> int:
+        """Mark a world-coordinate point (+radius) as blocked and incrementally
+        update the BFS clearance field around the affected cells.
+
+        Returns the number of newly blocked cells.
+        """
+        cx, cy = self.world_to_grid(wx, wy)
+        dirty = []
+        for dx in range(-radius_cells, radius_cells + 1):
+            for dy in range(-radius_cells, radius_cells + 1):
+                gx, gy = cx + dx, cy + dy
+                if 0 <= gx < self.width and 0 <= gy < self.height:
+                    if not self.grid[gx, gy]:
+                        self.grid[gx, gy] = True
+                        self.clearance[gx, gy] = 0
+                        dirty.append((gx, gy))
+        if not dirty:
+            return 0
+        # Incremental BFS: only propagate from newly blocked cells
+        from collections import deque as _deque
+        bfs = _deque(dirty)
+        while bfs:
+            x, y = bfs.popleft()
+            d = int(self.clearance[x, y])
+            for dx2, dy2 in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+                nx2, ny2 = x + dx2, y + dy2
+                if 0 <= nx2 < self.width and 0 <= ny2 < self.height:
+                    if self.clearance[nx2, ny2] > d + 1:
+                        self.clearance[nx2, ny2] = d + 1
+                        bfs.append((nx2, ny2))
+        return len(dirty)
+
+    def detect_dynamic_obstacles(self, px: float, py: float, yaw_deg: float,
+                                  sim_lidar: np.ndarray, expected_lidar: np.ndarray,
+                                  threshold_m: float = 2.0, min_range_m: float = 1.0) -> int:
+        """Compare actual LIDAR readings against expected (SDF-based) readings.
+
+        Where actual < expected - threshold, the discrepancy implies an obstacle
+        not in the static map.  Ray-cast the hit back to world coordinates and
+        mark it as a dynamic obstacle in the grid.
+
+        Returns the number of newly detected dynamic cells.
+        """
+        num_rays = len(sim_lidar)
+        yaw_rad = math.radians(yaw_deg)
+        fov = 360.0
+        angle_step = fov / num_rays
+        total_new = 0
+
+        for i in range(num_rays):
+            actual = float(sim_lidar[i])
+            expected = float(expected_lidar[i])
+            if actual < min_range_m:
+                continue  # too close — likely noise
+            if actual < expected - threshold_m:
+                rel_angle = math.radians(-180 + (i * angle_step))
+                ray_angle = rel_angle + yaw_rad
+                hit_x = px + actual * math.cos(ray_angle)
+                hit_y = py + actual * math.sin(ray_angle)
+                total_new += self.mark_dynamic_obstacle(hit_x, hit_y, radius_cells=2)
+        return total_new
+
 
 def heuristic(a, b):
     return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
@@ -803,6 +872,112 @@ class BatteryModel:
         return wh_left / p * 3600.0
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SENSOR NOISE / DOMAIN RANDOMISATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SensorNoiseModel:
+    """Injects realistic sensor imperfections for sim2real transfer.
+
+    Noise profiles are calibrated to typical low-cost UAV sensor specs:
+    - LIDAR: ±0.08 m Gaussian + 0.5% dropout to max_dist
+    - IMU accel: ±0.03 m/s² bias + 0.15 m/s² white noise
+    - IMU gyro: ±0.5 °/s bias + 1.5 °/s white noise
+    - GPS: ±0.8 m position noise (applied to local NED)
+    - Heading: ±1.5° white noise
+    - Thrust: global multiplier 0.92–1.0 (simulates aging motors)
+    """
+    def __init__(self, seed: int | None = None, enabled: bool = True):
+        self._rng = np.random.RandomState(seed)
+        self.enabled = enabled
+        if enabled:
+            self.lidar_sigma = 0.08
+            self.lidar_dropout_rate = 0.005
+            self.accel_bias = self._rng.uniform(-0.03, 0.03, size=3)
+            self.accel_noise_sigma = 0.15
+            self.gyro_bias_dps = self._rng.uniform(-0.5, 0.5, size=3)
+            self.gyro_noise_sigma_dps = 1.5
+            self.gps_sigma_m = 0.8
+            self.heading_noise_sigma_deg = 1.5
+            self.thrust_factor = self._rng.uniform(0.92, 1.0)
+        else:
+            self.thrust_factor = 1.0
+
+    def apply_lidar(self, ranges: np.ndarray, max_dist: float = 20.0) -> np.ndarray:
+        if not self.enabled:
+            return ranges
+        noisy = ranges + self._rng.normal(0, self.lidar_sigma, size=ranges.shape)
+        dropout_mask = self._rng.random(size=ranges.shape) < self.lidar_dropout_rate
+        noisy[dropout_mask] = max_dist
+        return np.clip(noisy, 0.0, max_dist)
+
+    def apply_imu_accel(self, ax: float, ay: float, az: float) -> tuple[float, float, float]:
+        if not self.enabled:
+            return ax, ay, az
+        noise = self._rng.normal(0, self.accel_noise_sigma, size=3)
+        return (ax + self.accel_bias[0] + noise[0],
+                ay + self.accel_bias[1] + noise[1],
+                az + self.accel_bias[2] + noise[2])
+
+    def apply_imu_gyro(self, rx: float, ry: float, rz: float) -> tuple[float, float, float]:
+        if not self.enabled:
+            return rx, ry, rz
+        noise = self._rng.normal(0, self.gyro_noise_sigma_dps, size=3)
+        return (rx + self.gyro_bias_dps[0] + noise[0],
+                ry + self.gyro_bias_dps[1] + noise[1],
+                rz + self.gyro_bias_dps[2] + noise[2])
+
+    def apply_heading(self, heading_deg: float) -> float:
+        if not self.enabled:
+            return heading_deg
+        return heading_deg + self._rng.normal(0, self.heading_noise_sigma_deg)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLOSED-LOOP STUDENT CONTROLLER
+# ══════════════════════════════════════════════════════════════════════════════
+
+class StudentController:
+    """Loads a trained StudentNet and produces inference commands.
+
+    Designed for closed-loop blending: each tick, the student generates
+    its own (cmd_vx, cmd_vy, cmd_vz, cmd_yaw) from the current sensor state.
+    The main loop blends teacher and student commands via `student_blend`.
+    """
+    def __init__(self, model_path: str, device: str = "cpu"):
+        if torch is None:
+            raise RuntimeError("PyTorch not available — cannot load student model")
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+        self.enriched = checkpoint.get("enriched", False)
+        self.in_dim = checkpoint.get("in_dim", 75)
+        self.scalar_keys = checkpoint.get("scalar_keys", [])
+
+        # Reconstruct the network
+        from training.train_student_px4 import StudentNet
+        self.net = StudentNet(in_dim=self.in_dim, out_dim=4).to(device)
+        state = checkpoint.get("state_dict", checkpoint)
+        self.net.load_state_dict(state)
+        self.net.eval()
+        self.device = device
+
+    @torch.no_grad()
+    def infer(self, lidar: list[float], state_dict: dict) -> tuple[float, float, float, float]:
+        """Produce (cmd_vx, cmd_vy, cmd_vz, cmd_yaw) from current sensor data.
+
+        state_dict should contain keys matching the enriched scalar schema.
+        """
+        yaw_rad = math.radians(state_dict.get("yaw", 0.0))
+        if self.enriched and self.scalar_keys:
+            scalars = [float(state_dict.get(k, 0.0)) for k in self.scalar_keys]
+            feat = lidar + [math.sin(yaw_rad), math.cos(yaw_rad)] + scalars
+        else:
+            feat = lidar + [state_dict.get("rel_alt", 0.0),
+                           math.sin(yaw_rad), math.cos(yaw_rad)]
+        x = torch.tensor([feat], dtype=torch.float32, device=self.device)
+        out = self.net(x)[0].cpu().tolist()
+        return tuple(out)  # (cmd_vx, cmd_vy, cmd_vz, cmd_yaw)
+
+
 class WindModel:
     """Ornstein-Uhlenbeck wind simulation in NED frame.
 
@@ -1026,6 +1201,25 @@ async def collect_data(args):
     log("--> Map loaded.")
     grid = GridMap(world_map.obstacles, resolution=1.0, margin=2.5)
     log("--> Grid ready.")
+
+    # --- Sensor noise for domain randomization ---
+    noise_model = SensorNoiseModel(enabled=args.domain_randomization) if args.domain_randomization else None
+    if noise_model:
+        log("--> Domain randomization ENABLED (SensorNoiseModel active)")
+
+    # --- Student controller for closed-loop inference ---
+    student_ctrl = None
+    if args.student_model and torch is not None:
+        try:
+            student_ctrl = StudentController(args.student_model)
+            log(f"--> StudentController loaded from {args.student_model} (blend={args.student_blend:.2f})")
+        except Exception as e:
+            log(f"!! StudentController load failed: {e}")
+    elif args.student_model and torch is None:
+        log("!! --student_model set but PyTorch unavailable; student inference disabled")
+
+    if args.dynamic_obstacles:
+        log("--> Dynamic obstacle detection ENABLED")
 
     # --- Redis Setup (Bridge) ---
     redis_client = None
@@ -1634,7 +1828,24 @@ async def collect_data(args):
                 cross_track_m = 0.0
 
             map_yaw_deg = heading_to_map_yaw(dstate.yaw)
-            sim_lidar = world_map.simulate_lidar(px, py, dstate.rel_alt, map_yaw_deg)
+            sim_lidar_raw = world_map.simulate_lidar(px, py, dstate.rel_alt, map_yaw_deg)
+
+            # Dynamic obstacle detection: compare raw LIDAR vs SDF expectation
+            if args.dynamic_obstacles:
+                expected_lidar = sim_lidar_raw.copy()
+                grid.detect_dynamic_obstacles(
+                    px, py, map_yaw_deg,
+                    sim_lidar_raw, expected_lidar, threshold_m=2.0,
+                )
+
+            # Domain randomization: inject sensor noise for sim2real
+            if noise_model is not None:
+                sim_lidar = noise_model.apply_lidar(sim_lidar_raw.copy(),
+                                                    max_dist=world_map.lidar_max_dist
+                                                    if hasattr(world_map, 'lidar_max_dist') else 50.0)
+            else:
+                sim_lidar = sim_lidar_raw
+
             min_dist = float(np.min(sim_lidar))
 
             map_vx_now, map_vy_now = ned_to_map_xy(dstate.vx, dstate.vy)
@@ -1825,7 +2036,32 @@ async def collect_data(args):
                     crawl = min(float(args.min_crawl_speed), float(args.max_speed))
                     desired_speed = max(desired_speed, crawl)
                 else:
-                    desired_speed = 0.0
+                    # --- Freeze-escape: allow lateral crawl along avoidance vector ---
+                    # Instead of hard 0.0, allow a minimal lateral crawl if an
+                    # avoidance vector exists, so the drone can slide away from
+                    # the obstacle rather than hovering indefinitely.
+                    if avoid_norm > 0.1:
+                        # Override nav direction to purely avoidance (escape)
+                        nav_ux, nav_uy = avoid_ux, avoid_uy
+                        desired_speed = min(float(args.min_crawl_speed) * 0.5, 0.35)
+                    else:
+                        desired_speed = 0.0
+                    # Stuck hover timer: if we've been near-zero for too long, force replan
+                    if not hasattr(collect_data, '_stuck_hover_since'):
+                        collect_data._stuck_hover_since = now
+                    elif (now - collect_data._stuck_hover_since) > 3.0:
+                        log(f"Stuck-hover escape -> force replan (front={front_eval_dist:.2f} geom={geom_clearance_m:.2f})")
+                        goal_x, goal_y = pick_new_goal()
+                        goal_set_at = time.time()
+                        last_replan_at = now
+                        current_path = []
+                        heading_stall_strikes = 0
+                        low_progress_strikes = 0
+                        collect_data._stuck_hover_since = now
+                        continue
+            else:
+                # Reset stuck timer when not in front-blocked state
+                collect_data._stuck_hover_since = None
 
             speed_planar_now = math.hypot(dstate.vx, dstate.vy)
             attitude_unstable = (
@@ -2039,6 +2275,41 @@ async def collect_data(args):
                 )
                 metrics_log_at = time.time()
 
+            # ── Student closed-loop inference + command blending ─────────
+            _student_vx = _student_vy = _student_vz = _student_yaw = 0.0
+            if student_ctrl is not None and args.student_blend > 0.0:
+                try:
+                    state_dict = {
+                        "rel_alt": dstate.rel_alt,
+                        "front_lidar_min": front_eval_dist,
+                        "cross_track_m": cross_track_m,
+                        "heading_error_deg": heading_error_deg if 'heading_error_deg' in dir() else 0.0,
+                        "sideslip_deg": sideslip_now_deg,
+                        "progress_mps": progress_mps if 'progress_mps' in dir() else 0.0,
+                        "geom_clearance_m": geom_clearance_m,
+                        "geom_threat": geom_threat,
+                        "tilt_target_deg": tilt_target_deg if 'tilt_target_deg' in dir() else 0.0,
+                        "roll_deg": dstate.roll,
+                        "pitch_deg": dstate.pitch,
+                        "roll_rate_dps": dstate.roll_rate_dps,
+                        "pitch_rate_dps": dstate.pitch_rate_dps,
+                        "yaw_rate_dps": dstate.yaw_rate_dps,
+                        "ground_speed_mps": math.hypot(dstate.vx, dstate.vy),
+                        "distance_to_goal_m": math.hypot(px - goal_x, py - goal_y),
+                        "wind_north_mps": wind_model.north if wind_model else 0.0,
+                        "wind_east_mps": wind_model.east if wind_model else 0.0,
+                    }
+                    sv = student_ctrl.infer(sim_lidar, state_dict)
+                    _student_vx, _student_vy, _student_vz, _student_yaw = sv
+                    blend = clamp(args.student_blend, 0.0, 1.0)
+                    vx_cmd = (1.0 - blend) * vx_cmd + blend * _student_vx
+                    vy_cmd = (1.0 - blend) * vy_cmd + blend * _student_vy
+                    cmd_yaw = (1.0 - blend) * cmd_yaw + blend * _student_yaw
+                except Exception as e:
+                    if (now - getattr(student_ctrl, '_last_err_log', 0)) > 5.0:
+                        log(f"!! Student inference error: {e}")
+                        student_ctrl._last_err_log = now
+
             vz_cmd = 0.0
             if takeoff_target_alt is not None:
                 if dstate.rel_alt < max(0.8, takeoff_target_alt - 0.4):
@@ -2072,7 +2343,7 @@ async def collect_data(args):
             except Exception:
                 _obs_near = 0
             # path waypoints remaining
-            _wps_rem = len(waypoints) - wp_idx if 'waypoints' in dir() else 0
+            _wps_rem = max(0, len(current_path) - path_index) if current_path else 0
             # flight phase: 0=GROUND 1=TAKEOFF 2=CRUISE 3=APPROACH 4=HOVER 5=LAND
             if not dstate.in_air:
                 _phase = 0
@@ -2505,9 +2776,10 @@ def collect_data_offline(args):
                     goal_x, goal_y = pick_new_goal_offline(px, py)
                     continue
 
-                current_path = path[::2] + [path[-1]]
+                current_path = smooth_path(path, grid)
+                current_path = current_path[::2] + [current_path[-1]]
                 path_index = 0
-                print(f"[OFFLINE] Path found! {len(current_path)} waypoints")
+                print(f"[OFFLINE] Path found! {len(current_path)} waypoints (smoothed)")
 
             lookahead_dist = 4.0
             target_pt = current_path[path_index]
@@ -2657,6 +2929,18 @@ if __name__ == "__main__":
     parser.add_argument("--replan_heading_hold_deg", type=float, default=80.0, help="Do not count low-progress strikes while heading error exceeds this angle.")
     parser.add_argument("--replan_cooldown_sec", type=float, default=3.5, help="Minimum seconds between forced replans to avoid oscillation.")
     parser.add_argument("--heading_stall_grace_sec", type=float, default=2.5, help="Ignore heading-stall counting briefly after each new goal/replan.")
+    parser.add_argument("--student_model", type=str, default="",
+                        help="Path to trained student .pt checkpoint for closed-loop inference.")
+    parser.add_argument("--student_blend", type=float, default=0.0,
+                        help="Student/teacher command blend ratio (0.0=pure teacher, 1.0=pure student).")
+    parser.add_argument("--domain_randomization", action="store_true",
+                        help="Inject sensor noise (LIDAR/IMU/GPS) for sim2real domain transfer.")
+    parser.add_argument("--no_domain_randomization", action="store_false", dest="domain_randomization")
+    parser.set_defaults(domain_randomization=False)
+    parser.add_argument("--dynamic_obstacles", action="store_true",
+                        help="Enable LIDAR-driven dynamic obstacle detection and grid updates.")
+    parser.add_argument("--no_dynamic_obstacles", action="store_false", dest="dynamic_obstacles")
+    parser.set_defaults(dynamic_obstacles=False)
     parser.add_argument("--sdf_path", type=str, default=os.environ.get("SDF_PATH", "obstacles.sdf"))
     parser.add_argument("--offline", action="store_true", help="Run without PX4/Gazebo (pure Python)")
     parser.add_argument(
