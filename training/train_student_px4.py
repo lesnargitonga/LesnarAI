@@ -211,6 +211,8 @@ def main():
     val_dl = DataLoader(val_ds, batch_size=args.bs, shuffle=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}"
+          f"{' (' + torch.cuda.get_device_name(0) + ')' if torch.cuda.is_available() else ''}")
     net = StudentNet(in_dim=in_dim).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)

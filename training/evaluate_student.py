@@ -76,11 +76,12 @@ def load_eval_data(csv_paths: list[Path], enriched: bool):
 
 def evaluate_model(model_path: str, csv_paths: list[Path], batch_size: int = 512):
     """Run full evaluation and return metrics dict."""
-    ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ckpt = torch.load(model_path, map_location=device, weights_only=False)
     enriched = ckpt.get("enriched", True)
     in_dim = ckpt.get("in_dim", ENRICHED_FEATURE_DIM if enriched else LEGACY_FEATURE_DIM)
 
-    net = StudentNet(in_dim=in_dim)
+    net = StudentNet(in_dim=in_dim).to(device)
     net.load_state_dict(ckpt["state_dict"])
     net.eval()
 
@@ -91,12 +92,12 @@ def evaluate_model(model_path: str, csv_paths: list[Path], batch_size: int = 512
     X_t = torch.tensor(X, dtype=torch.float32)
     Y_t = torch.tensor(Y_teacher, dtype=torch.float32)
 
-    # Batch inference
+    # Batch inference on GPU
     preds = []
     with torch.no_grad():
         for i in range(0, len(X_t), batch_size):
-            batch = X_t[i:i + batch_size]
-            preds.append(net(batch))
+            batch = X_t[i:i + batch_size].to(device)
+            preds.append(net(batch).cpu())
     Y_pred = torch.cat(preds, dim=0).numpy()
 
     # Overall MAE per output channel
@@ -195,6 +196,8 @@ def main():
             csv_paths.append(Path(pattern))
 
     print(f"Evaluating {args.model} against {len(csv_paths)} CSV file(s)...")
+    print(f"Device: {torch.device('cuda' if torch.cuda.is_available() else 'cpu')}"
+          f"{' (' + torch.cuda.get_device_name(0) + ')' if torch.cuda.is_available() else ''}")
     metrics = evaluate_model(args.model, csv_paths)
 
     print("\n" + "=" * 60)

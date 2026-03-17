@@ -944,9 +944,11 @@ class StudentController:
     its own (cmd_vx, cmd_vy, cmd_vz, cmd_yaw) from the current sensor state.
     The main loop blends teacher and student commands via `student_blend`.
     """
-    def __init__(self, model_path: str, device: str = "cpu"):
+    def __init__(self, model_path: str, device: str | None = None):
         if torch is None:
             raise RuntimeError("PyTorch not available — cannot load student model")
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         checkpoint = torch.load(model_path, map_location=device, weights_only=False)
         self.enriched = checkpoint.get("enriched", False)
         self.in_dim = checkpoint.get("in_dim", 75)
@@ -1212,7 +1214,7 @@ async def collect_data(args):
     if args.student_model and torch is not None:
         try:
             student_ctrl = StudentController(args.student_model)
-            log(f"--> StudentController loaded from {args.student_model} (blend={args.student_blend:.2f})")
+            log(f"--> StudentController loaded from {args.student_model} (blend={args.student_blend:.2f}, device={student_ctrl.device})")
         except Exception as e:
             log(f"!! StudentController load failed: {e}")
     elif args.student_model and torch is None:
