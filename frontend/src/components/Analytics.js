@@ -30,14 +30,18 @@ function Analytics({ socket }) {
       updateTelemetry(data);
       const ts = new Date();
       setTelemetryHistory(prev => {
+        const batteryValues = Array.isArray(data.telemetry)
+          ? data.telemetry.map((d) => Number(d?.battery)).filter((v) => Number.isFinite(v))
+          : [];
+        const avgBatterySample = batteryValues.length
+          ? Math.round(batteryValues.reduce((s, v) => s + v, 0) / batteryValues.length)
+          : null;
         const next = [
           ...prev,
           {
             time: ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
             activeDrones: data.fleet_status?.flying_drones || 0,
-            avgBattery: data.telemetry?.length
-              ? Math.round(data.telemetry.reduce((s, d) => s + (d.battery || 0), 0) / data.telemetry.length)
-              : 0,
+            avgBattery: avgBatterySample,
           },
         ];
         return next.slice(-40);
@@ -79,12 +83,19 @@ function Analytics({ socket }) {
   }, []);
 
   const flyingDrones = drones.filter((d) => getDroneFlags(d).flying);
-  const avgBattery = drones.length
-    ? Math.round(drones.reduce((s, d) => s + (d.battery || 0), 0) / drones.length)
-    : 0;
-  const avgSpeed = flyingDrones.length
-    ? (flyingDrones.reduce((s, d) => s + (d.speed || 0), 0) / flyingDrones.length).toFixed(1)
-    : '0.0';
+  const batteryValues = drones
+    .map((d) => getDroneFlags(d).battery)
+    .filter((v) => Number.isFinite(v));
+  const avgBattery = batteryValues.length
+    ? Math.round(batteryValues.reduce((s, v) => s + v, 0) / batteryValues.length)
+    : null;
+
+  const speedValues = flyingDrones
+    .map((d) => getDroneFlags(d).speed)
+    .filter((v) => Number.isFinite(v));
+  const avgSpeed = speedValues.length
+    ? (speedValues.reduce((s, v) => s + v, 0) / speedValues.length).toFixed(1)
+    : '—';
   const sessionMinutes = Math.round((Date.now() - sessionStart) / 60000);
 
   const downloadBlob = (filename, content, type) => {
@@ -143,7 +154,7 @@ function Analytics({ socket }) {
       {/* Hero Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <MetricBox title="Flight Tempo" value={`${flyingDrones.length}/${drones.length}`} label="Active Sorties" icon={Compass} color="accent" />
-        <MetricBox title="Energy Matrix" value={`${avgBattery}%`} label="Fleet Average" icon={Zap} color="success" />
+        <MetricBox title="Energy Matrix" value={avgBattery === null ? '—' : `${avgBattery}%`} label="Fleet Average" icon={Zap} color="success" />
         <MetricBox title="Propulsion" value={`${avgSpeed} m/s`} label="Cruise Velocity" icon={TrendingUp} color="warning" />
         <MetricBox title="Mission Sync" value={`${sessionMinutes}m`} label="Session Elapsed" icon={Clock} color="accent" />
       </div>
@@ -201,9 +212,9 @@ function Analytics({ socket }) {
             Readiness Matrix
           </h3>
           <div className="space-y-6">
-            <ProgressMatrix label="Neural Mesh" value={healthData?.features?.computer_vision ? 98 : 0} color="accent" />
+            <ProgressMatrix label="Neural Mesh" value={healthData?.features?.computer_vision ? 100 : 0} color="accent" />
             <ProgressMatrix label="Collision Shield" value={healthData?.features?.obstacle_avoidance ? 100 : 0} color="success" />
-            <ProgressMatrix label="Command Uplink" value={healthData?.status === 'ok' ? 95 : 0} color="warning" />
+            <ProgressMatrix label="Command Uplink" value={healthData?.status === 'ok' ? 100 : 0} color="warning" />
             <ProgressMatrix label="Battery Density" value={avgBattery} color="accent" />
           </div>
 
@@ -306,16 +317,19 @@ function ProgressMatrix({ label, value, color }) {
     warning: 'bg-lesnar-warning',
   };
 
+  const valueNumber = Number.isFinite(value) ? value : null;
+  const width = valueNumber === null ? 0 : Math.max(0, Math.min(100, valueNumber));
+
   return (
     <div className="space-y-2">
       <div className="flex justify-between items-end">
         <span className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">{label}</span>
-        <span className="text-[10px] font-mono text-white font-bold">{value}%</span>
+        <span className="text-[10px] font-mono text-white font-bold">{valueNumber === null ? '—' : `${valueNumber}%`}</span>
       </div>
       <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
         <div
           className={`h-full transition-all duration-1000 ${barColors[color]}`}
-          style={{ width: `${value}%` }}
+          style={{ width: `${width}%` }}
         />
       </div>
     </div>

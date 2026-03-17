@@ -1,679 +1,398 @@
 # Operation Sentinel
 
-## Overview
-Operation Sentinel is a local, offline-capable drone autonomy and command control stack. 
-It is designed for simulation in PX4 SITL with Gazebo Harmonic.
+Operation Sentinel is the LesnarAI command-and-control stack for autonomous UAV simulation, data collection, and student-model training. It integrates PX4 SITL, Gazebo Harmonic, a Gunicorn-served Flask/Socket.IO backend, a React operator frontend, and a MAVSDK-based teacher bridge that drives the drone and collects flight telemetry.
 
-### 🛑 CRITICAL HACKATHON DIRECTIVE (MARCH 2026)
-**Do not run this via Windows Mounts (`/mnt/d/...`)**. You must open this repository using the **"WSL: Ubuntu" Remote extension in VS Code**. If you use PowerShell, Gazebo will lag and the UI will fail to bind. All terminals mentioned below MUST be native WSL bash terminals.
+## System Overview
 
-**Canonical native location:** `~/workspace/LesnarAI`
+| Component | Technology | Port |
+|---|---|---|
+| Operator UI | React (CRA dev server) | 3000 |
+| Backend API | Flask + Gunicorn + Socket.IO | 5000 |
+| Database | TimescaleDB (Postgres) in Docker | 5432 |
+| DB Admin | Adminer in Docker | 8080 |
+| Message bus | Redis in Docker | 6379 |
+| Simulation | Gazebo Harmonic + PX4 SITL (`x500`) | — |
+| Teacher bridge | `training/px4_teacher_collect_gz.py` | — |
+| Runtime orchestrator | `scripts/runtime_orchestrator.py` | 8765 |
+| MAVSDK server | Auto-launched by teacher bridge | 50051 |
 
-**Verify before running demo commands:**
-```bash
-pwd && realpath .
-```
-Both lines must resolve under `/home/...` and **not** `/mnt/...`.
+Run artifacts are written to `$LESNAR_DATA_ROOT/px4_teacher/runs/<run_id>/` and include a locked `MANIFEST.json` with SHA-256 hashes of every artifact.
 
----
+## Design Principles
 
-## ⚡ Presentation Day Quick Start (10 Minutes)
+**Truth-first.** Drone existence in the UI is gated by Gazebo ground truth via the runtime orchestrator `/models` endpoint. The backend runs in external-only mode (`LESNAR_EXTERNAL_ONLY=1`) by default — drones are registered only when real MAVSDK telemetry arrives on the Redis `telemetry` channel. No phantom assets, no synthesised KPIs.
 
-Run these in order from WSL at `~/workspace/LesnarAI`.
+**Auditable runs.** Every `/launch-all` creates an immutable run directory. Every `/kill-all` finalises it with a SHA-256 manifest and an optional signed audit-chain entry.
 
-### 1) Bootstrap secure runtime files
+**Environment stressors are labelled.** Wind and air-density fields are simulated for training realism and published under a clearly marked `environment.synthetic_environment: true` key. They are never substituted for real sensor data.
+
+## Prerequisites
+
+- WSL2 (Ubuntu 22.04 or 24.04) with home directory on the native Linux filesystem (e.g. `/home/lesnar/`)
+- Docker Desktop with WSL integration enabled
+- PX4-Autopilot source at `~/PX4-Autopilot` (built at least once with `make px4_sitl gz_x500`)
+- Gazebo Harmonic (`gz-harmonic`) installed in WSL
+- Python 3.12 virtual environment at `.venv-wsl/`
+- Node.js ≥ 18 for the frontend
+
+> **Do not run from `/mnt/...` paths.** File-locking and performance issues are known when the working directory is on the Windows NTFS mount. All terminals must `cd ~/workspace/LesnarAI` first.
+
+Quick sanity check:
+
 ```bash
 cd ~/workspace/LesnarAI
-python3 scripts/bootstrap_secure_deployment.py
-python3 scripts/validate_secure_deployment.py
+realpath .   # must not start with /mnt
 ```
 
-### 2) Start backend services
-```bash
-docker compose --env-file .env.secure up -d --build
-```
+## Quickstart — Full Stack
 
-Local fallback: if `.env.secure` has not been generated yet, `docker compose up -d --build` now uses safe local development defaults for auth/session secrets and telemetry timing. For presentation or shared environments, continue to use `.env.secure`.
-
-### 3) Start frontend
-```bash
-cd ~/workspace/LesnarAI/frontend
-npm start
-```
-
-### 4) Login and verify health
 ```bash
 cd ~/workspace/LesnarAI
-export LESNAR_USER="lesnar"
-export LESNAR_PASS="lesnar1234"
-export SESSION_HEADER="$(python3 scripts/request_session_token.py --username "$LESNAR_USER" --password "$LESNAR_PASS")"
-curl -s -H "$SESSION_HEADER" http://localhost:5000/api/health | jq .status
+./scripts/start_stack_verified.sh
 ```
 
-### 4.1) Run command preflight (recommended only after live simulation/teacher is running)
+This script:
+1. Rebuilds and starts TimescaleDB, Redis, and the backend container
+2. Starts Adminer
+3. Starts the runtime orchestrator on port `8765`
+4. Kills any stale React dev servers, then starts a clean one on port `3000`
+5. Runs an end-to-end smoke test and exits non-zero on any failure
+
+Gazebo and PX4 are **not** started by this script. Launch them from the frontend (see below) or from the CLI.
+
+Default Gazebo mode: headless (`LESNAR_GZ_HEADLESS=1`). To re-enable the GUI:
+
 ```bash
-cd ~/workspace/LesnarAI
-./scripts/preflight_control_check.sh --username "$LESNAR_USER" --password "$LESNAR_PASS"
+LESNAR_GZ_HEADLESS=0 ./scripts/start_stack_verified.sh
 ```
-This validates auth, backend health, active drone presence, and telemetry freshness.
-If PX4 + Gazebo + teacher are not running yet, this check is expected to fail.
 
-### 5) Open demo URLs
-- Frontend: http://localhost:3000 (only after `cd ~/workspace/LesnarAI/frontend && npm start`)
-- Backend health: do not open directly in browser in secure mode; verify with authenticated curl instead:
+## Launching the Simulation
+
+### Option A — Frontend (recommended)
+
+After `start_stack_verified.sh` is running, open `http://127.0.0.1:3000`, navigate to **Settings → Simulator Runtime Orchestrator**, and press **SPAWN CLUSTER**.
+
+This starts Gazebo, spawns the PX4 `x500` drone, and launches the teacher bridge — all in one action. Status indicators for Gazebo, PX4, Teacher Bridge, and the drone model update in real time.
+
+Press **INSTANT KILL ALL** to stop the simulation and finalise the run manifest.
+
+### Option B — CLI via orchestrator
 
 ```bash
-curl -s -H "$SESSION_HEADER" http://localhost:5000/api/health | jq .
+# Start Gazebo world (headless)
+./scripts/start_sim.sh
+
+# Launch drone + teacher via the orchestrator
+curl -s -X POST http://127.0.0.1:8765/launch-all \
+  -H 'Content-Type: application/json' \
+  -d '{"drone_count": 1, "gz_headless": true}'
+
+# Stop and finalise
+curl -s -X POST http://127.0.0.1:8765/kill-all
 ```
-- Adminer: http://localhost:8080
 
-### 6) Optional live simulation
+### Option C — Manual staged launch (debugging only)
+
+For diagnosing Gazebo entity-loading timeouts with the 200+ obstacle world:
+
+**Terminal 1 — Physics engine:**
 ```bash
-cd ~/workspace/LesnarAI
-gz sim -v4 -r obstacles.sdf &
-sleep 10
 cd ~/PX4-Autopilot
-export PX4_GZ_MODEL="x500"
-PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
+export GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:$(pwd)/Tools/simulation/gz/models
+gz sim -v4 -r ~/workspace/LesnarAI/obstacles.sdf
+```
+Wait 10–20 s for the world to fully load.
+
+**Terminal 2 — PX4 SITL:**
+```bash
+killall -9 px4 2>/dev/null; true
+cd ~/PX4-Autopilot
+export PX4_GZ_STANDALONE=1
+export PX4_GZ_WORLD=obstacles
+make px4_sitl gz_x500
 ```
 
-In another WSL terminal:
+**Terminal 3 — Teacher bridge:**
 ```bash
 cd ~/workspace/LesnarAI
 source .venv-wsl/bin/activate
-mkdir -p dataset/px4_teacher logs
-python3 training/px4_teacher_collect_gz.py --duration 0 --mavsdk-server auto --hz 5
+python3 training/px4_teacher_collect_gz.py \
+  --duration 0 \
+  --system 127.0.0.1:14540 \
+  --mavsdk-server auto \
+  --hz 5 \
+  --alt 12 \
+  --bridge_only \
+  --drone-id x500_0 \
+  --out /tmp/telemetry_manual.csv
 ```
 
-**Two bridge modes — pick the right one:**
+## Flight Control from the Frontend
 
-| Mode | Command | Use when |
-|------|---------|----------|
-| **Autonomous data collection** | *(no flag)* — default | Recording training data; drone flies its own A* path through `obstacles.sdf` |
-| **App-controlled bridge** | `--bridge_only` | Live operator demo where the app sends arm/takeoff/goto/land commands |
+Once the stack and simulation are running:
 
-> **Do not mix them up.** Running `--bridge_only` for a data-collection session produces **zero-byte CSVs** because the bridge never takes off. Running without it during a live operator demo means the bridge overrides operator commands.
+1. Open `http://127.0.0.1:3000` and log in (`lesnar` / `LesnarAdmin2026!`).
+2. The drone `x500_0` appears in the fleet list once telemetry is received.
+3. Available operator actions:
+   - **ARM** — arms the motors
+   - **TAKEOFF** — arms + takes off to the configured altitude
+   - **LAND** — commands a controlled landing
+   - **DISARM** — disarms (ground only)
+   - **GOTO** — flies to a clicked map coordinate via A\* path planning
+   - **START TRAINING** — dispatches a 4-waypoint box mission around the drone's current GPS position; the teacher bridge arms, takes off, and navigates autonomously while collecting telemetry
 
----
+All commands are published to the Redis `commands` channel and consumed by the teacher bridge in real time. PX4 mode transitions (Auto.Takeoff → Offboard) are managed inside the bridge.
 
-## 🚀 The Native WSL Demo Playbook (A-Z)
+## Runtime Orchestrator
 
-This is the current reliable sequence for March 2026.
+`scripts/runtime_orchestrator.py` is a lightweight HTTP service on port `8765`.
 
-### A) Terminal 1 — Backend and auth baseline
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Liveness probe |
+| `/status` | GET | Process state + cached Gazebo model list |
+| `/models` | GET | Live Gazebo model list (UI ground truth) |
+| `/launch-all` | POST | Start Gazebo + PX4 + teacher bridge(s) |
+| `/kill-all` | POST | Stop all runtime processes + finalise manifest |
+
+`/launch-all` body (all fields optional):
+
+```json
+{
+  "drone_count": 1,
+  "gz_headless": true,
+  "teacher_args": ["--base_speed", "2.8", "--max_speed", "5.0"]
+}
+```
+
+`teacher_args` are appended verbatim to each `px4_teacher_collect_gz.py` invocation, enabling per-run controller and stressor overrides without editing scripts.
+
+### Run directory layout
+
+Every `/launch-all` creates:
+
+```
+$LESNAR_DATA_ROOT/px4_teacher/runs/<run_id>/
+├── RUN.json              # start metadata, git rev, obstacle hash
+├── telemetry_live_0.csv  # teacher CSV (pre-created, filled during flight)
+├── scenario.json         # (scenario runner only)
+├── outcomes.json         # (scenario runner only)
+└── MANIFEST.json         # SHA-256 hashes of all artifacts (written on /kill-all)
+```
+
+`$LESNAR_DATA_ROOT` defaults to `/mnt/j/LesnarData`. Override with the environment variable.
+
+## Teacher Bridge and Telemetry
+
+`training/px4_teacher_collect_gz.py` has two modes:
+
+| Mode | Flag | Behaviour |
+|---|---|---|
+| **Bridge-only** | `--bridge_only` | Subscribes to Redis `commands`; arms/takes off/navigates on operator instruction; collects telemetry |
+| **Autonomous** | _(no flag)_ | Immediately arms, takes off, and runs A\* autonomous navigation with no operator input |
+
+Telemetry CSV columns include: timestamp, GPS (lat/lon), relative altitude, NED velocity, commanded velocity, LIDAR simulation, cross-track error, heading error, obstacle clearance, FALCON metrics, battery model fields, GPS quality, and flight phase.
+
+**Wind and environment model.** Wind is enabled by default for training realism. All synthetic environment fields are published under `environment.synthetic_environment: true` and are never substituted for real sensor data. Disable with `--disable_wind_model`.
+
+**Battery model.** Off by default. Enable CSV-only battery/power model fields with `--enable_battery_model`. Real battery telemetry from MAVSDK is never overridden.
+
+**Known limitation — obstacle avoidance.** The current A\* path planner uses a pre-loaded static obstacle grid from the SDF world file. Dynamic obstacle avoidance (real-time re-planning around moving obstacles or obstacles not present in the SDF) is not yet implemented. This is a planned improvement.
+
+## Headless Scenario Runner
+
+For automated multi-run data collection:
+
 ```bash
-cd ~/workspace/LesnarAI
-python3 scripts/bootstrap_secure_deployment.py
-python3 scripts/validate_secure_deployment.py || true
-docker compose --env-file .env.secure up -d --build
+# Single run, 120 s
+python3 scripts/scenario_runner.py --count 1 --duration-s 120
 
-export LESNAR_USER="lesnar"
-export LESNAR_PASS="lesnar1234"
-export SESSION_HEADER="$(python3 scripts/request_session_token.py --username "$LESNAR_USER" --password "$LESNAR_PASS")"
-curl -s -H "$SESSION_HEADER" http://localhost:5000/api/health | jq .status
+# Overnight fuzz — randomises controller aggressiveness
+python3 scripts/scenario_runner.py \
+  --fuzz --seed 1337 --count 5000 --duration-s 90 --continue-on-fail
+
+# From a scenario file
+python3 scripts/scenario_runner.py \
+  --scenarios scripts/scenarios.example.json --continue-on-fail
 ```
 
-### B) Terminal 2 — Gazebo (server/headless recommended)
-```bash
-cd ~/workspace/LesnarAI
-gz sim -s -r obstacles.sdf
-```
+Each run writes `scenario.json` and `outcomes.json` into its run directory before manifest finalisation.
 
-If you want GUI mode instead, use `gz sim -v4 -r obstacles.sdf`.
+## Student Model Training
 
-### C) Terminal 3 — PX4 SITL
-```bash
-cd ~/PX4-Autopilot
-export PX4_GZ_MODEL="x500"
-export PX4_GZ_WORLD="obstacles"
-PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
-```
+After one or more collection runs:
 
-Expected: `INFO [commander] Ready for takeoff!`
-
-### D) Terminal 4 — Teacher bridge
-
-**For data collection (autonomous flight):**
 ```bash
 cd ~/workspace/LesnarAI
 source .venv-wsl/bin/activate
-mkdir -p dataset/px4_teacher logs
-python3 training/px4_teacher_collect_gz.py --duration 0 --mavsdk-server auto --hz 5 --alt 12 --base_speed 1.2 --max_speed 2.5
-```
-Drone takes off autonomously, navigates the obstacle world with A*, and records telemetry to `dataset/px4_teacher/telemetry_*.csv`.
+pip install -r training/requirements.txt   # first time only
 
-**For live app-controlled demo (operator drives the drone):**
-```bash
-python3 training/px4_teacher_collect_gz.py --duration 0 --mavsdk-server auto --hz 5 --bridge_only
-```
-Bridge stays passive; all commands (arm/takeoff/goto/land) come from the web app.
-
-Expected logs: `Redis CONNECTED`, then either `FALCON` metrics (autonomous) or `bridge_only: waiting for app commands`.
-
-### E) Terminal 1 — Preflight gate before any command
-```bash
-cd ~/workspace/LesnarAI
-./scripts/preflight_control_check.sh --username "$LESNAR_USER" --password "$LESNAR_PASS"
+# Train from the most recent orchestrator run
+latest_csv=$(ls -1t "${LESNAR_DATA_ROOT:-/mnt/j/LesnarData}/px4_teacher/runs"/*/telemetry_live_0.csv 2>/dev/null | head -1)
+python3 training/train_student_px4.py \
+  --data "$latest_csv" \
+  --epochs 20 \
+  --bs 128 \
+  --out models/student_px4_latest.pt
 ```
 
-Only send control commands after preflight reports ready.
+See `training/README.md` for full training pipeline documentation.
 
-### F) Terminal 1 — Confirm active drone
-```bash
-SESSION_HEADER="$(python3 scripts/request_session_token.py --username "$LESNAR_USER" --password "$LESNAR_PASS")"
-curl -s -H "$SESSION_HEADER" http://localhost:5000/api/drones | jq .
-```
+## Authentication
 
-Expected: `count >= 1`, `SENTINEL-01` present, and the live PX4 bridge drone reports `"source": "external"`.
+Runtime authentication is Postgres-backed (session tokens).
 
-### G) App control model
-Once the live bridge drone appears as `source: external`, normal operator control is handled from the web app:
-- arm / disarm
-- takeoff / land
-- goto / waypoint navigation
-- mission start / pause / resume / stop
-- live map tracking
-- analytics and log export
+| Role | Username | Default credential |
+|---|---|---|
+| Admin | `lesnar` | `LesnarAdmin2026!` |
+| Operator | `sentinnel` | set in DB / `manage_auth_users.py` |
+| Viewer | `viewer` | set in DB / `manage_auth_users.py` |
 
-Training is separate from operator control. Start training and data-collection workflows from the terminal, while using the app for flight operations, tracking, analysis, and exports.
-
-### H) Terminal 1 — Control commands
-```bash
-# Takeoff
-curl -s -X POST -H "$SESSION_HEADER" -H "Content-Type: application/json" \
-    -d '{"altitude":10}' \
-    http://localhost:5000/api/drones/SENTINEL-01/takeoff | jq .
-
-# Land
-curl -s -X POST -H "$SESSION_HEADER" -H "Content-Type: application/json" \
-    -d '{}' \
-    http://localhost:5000/api/drones/SENTINEL-01/land | jq .
-```
-
-### H) Fast recovery if things desync
-```bash
-pkill -f "px4_sitl|gz sim|gz-sim|px4_teacher_collect_gz.py|mavsdk_server" || true
-docker compose --env-file .env.secure restart backend
-```
-
-Then restart from step B.
-
----
-
-## ✅ Systematic Verification Checklist
-
-Run these in Terminal 1 after startup:
+Manage users interactively:
 
 ```bash
-cd ~/workspace/LesnarAI
-export LESNAR_USER="lesnar"
-export LESNAR_PASS="lesnar1234"
-export SESSION_HEADER="$(python3 scripts/request_session_token.py --username "$LESNAR_USER" --password "$LESNAR_PASS")"
-
-# Backend auth/health
-curl -s -H "$SESSION_HEADER" http://localhost:5000/api/health | jq .status
-
-# Active drone feed
-curl -s -H "$SESSION_HEADER" http://localhost:5000/api/drones | jq .
-
-# Preflight before commands
-./scripts/preflight_control_check.sh --username "$LESNAR_USER" --password "$LESNAR_PASS"
+python3 scripts/manage_auth_users.py
 ```
 
-Expected:
-- health returns `ok`
-- `/api/drones` shows `count: 1` only after PX4 + teacher are actually running
-- preflight ends with ready/success
+API keys are configured in `.env`. Read active values from `.env` directly.
 
----
+## Service Endpoints
 
-## 🧯 If the state looks wrong
+| Service | URL |
+|---|---|
+| Operator UI | `http://127.0.0.1:3000` |
+| Backend API | `http://127.0.0.1:5000` |
+| Runtime orchestrator | `http://127.0.0.1:8765` |
+| Adminer | `http://127.0.0.1:8080` |
+| Postgres | `127.0.0.1:5432` |
+| Redis | `127.0.0.1:6379` |
 
-### Case 1: Drone appears before you intended to start simulation
-That means `gz sim`, `px4_sitl`, or `px4_teacher_collect_gz.py` is still running in the background.
+Adminer login (local compose network):
 
-Check:
-```bash
-pgrep -af "px4_teacher_collect_gz.py|px4_sitl|gz sim|gz-sim|mavsdk_server" || true
-```
+- System: `PostgreSQL` / Server: `timescaledb` / Database: `lesnar`
+- Username and password: from `.env` (`POSTGRES_USER`, `POSTGRES_PASSWORD`)
 
-Stop all simulation-side processes:
-```bash
-pkill -f "px4_teacher_collect_gz.py|px4_sitl|gz sim|gz-sim|mavsdk_server" || true
-sleep 6
-curl -s -H "$SESSION_HEADER" http://localhost:5000/api/drones | jq .
-```
-
-Expected: `count: 0`
-
-### Case 2: Frontend shows old 401 or stale command errors
-- Refresh the browser once.
-- Re-login if required.
-- Re-run preflight before trying commands again.
-
-### Case 3: Backend is healthy but `/api/drones` is empty
-- PX4 and teacher are not fully connected yet, or telemetry is stale.
-- Keep the teacher running and wait for preflight to pass.
-
-### Case 4: Mission Control shows deployment unavailable
-- This should no longer happen for the live PX4/Gazebo bridge drone in the current March 2026 flow.
-- If it does happen, the likely causes are stale frontend state, an old backend container, or an old bridge process still running without the updated external mission support.
-- Verify the drone reports `source: external`, then restart backend + bridge if Mission Control still appears locked.
-
----
-
-## 🛑 Clean Shutdown
-
-Use this when you are done testing or before a fresh restart:
+## Verification
 
 ```bash
-pkill -f "px4_teacher_collect_gz.py|px4_sitl|gz sim|gz-sim|mavsdk_server" || true
-cd ~/workspace/LesnarAI
-docker compose --env-file .env.secure down
+# Backend liveness
+curl -s http://127.0.0.1:5000/
+
+# Login
+curl -s -X POST http://127.0.0.1:5000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"lesnar","password":"LesnarAdmin2026!"}'
+
+# Full smoke test
+python3 scripts/smoke_runtime.py
+
+# Pre-flight gate (confirms drone model + telemetry are present)
+./scripts/demo_preflight_gate.sh
+
+# Live drone watch
+watch -n 1 "curl -s -H 'X-API-Key: <operator_key>' http://127.0.0.1:5000/api/drones"
+
+# Runtime orchestrator status
+curl -s http://127.0.0.1:8765/status | python3 -m json.tool
 ```
 
----
-
-## 🌐 All URLs for Presentation
-
-| Service | URL | Purpose |
-|---------|-----|---------|
-| **Backend API** | http://localhost:5000 | REST API base |
-| **API Health** | http://localhost:5000/api/health | Use authenticated curl only in secure mode |
-| **API Drones** | http://localhost:5000/api/drones | Use authenticated curl only |
-| **Adminer (Database)** | http://localhost:8080 | View telemetry in TimescaleDB |
-| **Frontend Dashboard** | http://localhost:3000 | React UI (if running) |
-
----
-
-## 📦 Optional: Frontend Dashboard
-
-```bash
-# WSL Terminal (separate from others)
-cd ~/workspace/LesnarAI/frontend
-npm start
-```
-
-Then open: **http://localhost:3000**
-
----
-
-## 🎯 Quick Reference
-
-**Session Header:** `$(python3 scripts/request_session_token.py --username "$LESNAR_USER" --password "$LESNAR_PASS")`
-**Database Password:** `POSTGRES_PASSWORD` from `.env.secure`
-**Drone ID:** `SENTINEL-01`
-
-**Key Files:**
-- Obstacles: `obstacles.sdf` (85 obstacles)
-- Bridge: `training/px4_teacher_collect_gz.py`
-- Backend: `backend/app.py`
-
-## Requirements
-
-### Windows
-
-1. Windows 10 or Windows 11
-2. WSL2 enabled with Ubuntu 22.04 installed
-3. Docker Desktop, recommended, with WSL integration enabled
-
-### Ubuntu in WSL2
-
-1. Base tooling
-    ```bash
-    sudo apt update
-    sudo apt install -y git curl jq python3 python3-venv python3-pip build-essential
-    ```
-
-2. Node.js LTS, recommended via nvm
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-    source ~/.bashrc
-    nvm install --lts
-    ```
-
-3. Docker CLI available in WSL
-    ```bash
-    docker version
-    docker compose version
-    ```
-
-## Repository location
-
-Run PX4 and Gazebo from the WSL filesystem.
-Do not run heavy simulation workloads from `/mnt/c` or `/mnt/d`.
-
-If the repository currently resides on a Windows drive, copy it into WSL.
-```bash
-mkdir -p ~/workspace/LesnarAI
-rsync -a --delete "/mnt/<drive>/path/to/repo/" ~/workspace/LesnarAI/
-cd ~/workspace/LesnarAI
-```
-
-## Docker networking modes
-
-There are two supported setups.
-
-1. Recommended
-    Docker Desktop with WSL integration.
-    From WSL, `docker compose up` works.
-    From WSL, Redis is reachable at `127.0.0.1:6379`.
-
-2. Alternative
-    Docker runs only on Windows with no WSL integration.
-    In this mode, WSL cannot reach Redis at `127.0.0.1:6379`.
-    Obtain the Windows host IP from WSL.
-    ```bash
-    export WINDOWS_HOST=$(grep nameserver /etc/resolv.conf | awk '{print $2}')
-    echo "$WINDOWS_HOST"
-    ```
-
-## Start backend services
-
-1. Choose an environment file
-    For real deployments, generate secure envs and frontend runtime env files:
-    ```bash
-    python3 scripts/bootstrap_secure_deployment.py
-    python3 scripts/validate_secure_deployment.py
-    ```
-    Only use `.env.example` for isolated non-sensitive smoke tests.
-
-2. Start services
-    ```bash
-    docker compose --env-file .env.secure up -d --build
-    docker compose --env-file .env.secure ps
-    ```
-
-    For isolated local development only, `docker compose up -d --build` also works now because `docker-compose.yml` provides secure local fallback values for required backend env vars.
-
-3. Default endpoints
-    Backend API is `http://localhost:5000`.
-    Adminer is `http://localhost:8080`.
-
-4. Keys and configuration
-    The backend is fail-closed by default.
-    Session auth is the primary control path and browser API-key fallback is disabled by default.
-    Set strong values for `LESNAR_ADMIN_API_KEY` and `LESNAR_OPERATOR_API_KEY` only for legacy CLI fallback or automation that still depends on them.
-    Set `LESNAR_AUDIT_CHAIN_KEY` and `LESNAR_DATASET_SIGN_KEY` for signed audit/data integrity controls.
-    Restrict web origins via `LESNAR_CORS_ORIGINS`.
-    For secure operation, populate `LESNAR_AUTH_USERS_JSON`, `LESNAR_OPERATIONAL_BOUNDARY`, and local tile settings before use.
-
-## Frontend
-
-1. Generate frontend runtime env
-    ```bash
-    python3 scripts/bootstrap_secure_deployment.py --force
-    ```
-    This writes both `frontend/.env.local.secure` and the runtime file `frontend/.env.local`.
-
-2. Start the development server
-    ```bash
-    cd frontend
-    npm ci
-    npm start
-    ```
-
-3. Optional, build only
-    ```bash
-    npm run build
-    ```
-
-## PX4 SITL and Gazebo
-
-1. Install PX4 and dependencies
-    ```bash
-    cd ~
-    git clone --recursive https://github.com/PX4/PX4-Autopilot
-    bash PX4-Autopilot/Tools/setup/ubuntu.sh
-    ```
-
-2. **Copy obstacles world to PX4** (one-time setup)
-    ```bash
-    cp ~/workspace/LesnarAI/obstacles.sdf ~/PX4-Autopilot/Tools/simulation/gz/worlds/obstacles.sdf
-    ```
-
-3. **Start Gazebo with obstacles world FIRST**
-    ```bash
-    cd ~/workspace/LesnarAI
-    gz sim -v4 -r obstacles.sdf &
-    ```
-    
-    Wait 10-15 seconds for Gazebo GUI to open showing:
-    - 25 colored skyscrapers (80-150m tall)
-    - 50 red spires (200m tall)
-    - 10 green trees (ground level)
-
-4. **Then start PX4 to connect to running Gazebo**
-    ```bash
-    sleep 10
-    cd ~/PX4-Autopilot
-    export PX4_GZ_MODEL="x500"
-    export PX4_GZ_WORLD="obstacles"
-    PX4_GZ_STANDALONE=1 make px4_sitl gz_x500
-    ```
-
-The x500 drone will spawn in Gazebo among the obstacles. PX4 exposes MAVLink on UDP port 14540 by default.
-
-**Note:** The two-step startup (Gazebo first, then PX4) is required because the obstacles world is large (85 obstacles) and needs time to load before PX4 connects.
-
-## Bridge process
-
-1. Create a Python virtual environment
-    ```bash
-    cd ~/workspace/LesnarAI
-    python3 -m venv .venv-wsl
-    source .venv-wsl/bin/activate
-    pip install -U pip
-    pip install mavsdk numpy redis async-timeout
-    ```
-
-2. Start the bridge process
-
-    **Autonomous data collection mode** (default — records training CSV):
-    ```bash
-    mkdir -p dataset/px4_teacher logs
-    python3 training/px4_teacher_collect_gz.py \
-      --drone-id SENTINEL-01 \
-      --redis-host 127.0.0.1 \
-      --redis-port 6379 \
-      --mavsdk-server auto \
-      --hz 5 --alt 12 --base_speed 1.2 --max_speed 2.5
-    ```
-
-    **App-controlled bridge mode** (operator drives via web app):
-    ```bash
-    python3 training/px4_teacher_collect_gz.py \
-      --drone-id SENTINEL-01 \
-      --redis-host 127.0.0.1 \
-      --redis-port 6379 \
-      --mavsdk-server auto \
-      --bridge_only
-    ```
-
-If Docker runs only on Windows, replace `--redis-host 127.0.0.1` with `--redis-host $WINDOWS_HOST`.
-
-## Training workflow
-
-Training is started from the terminal, not from the app UI.
-
-Use the app for:
-- live control
-- mission planning/execution
-- tracking
-- analytics
-- log export
-
-Use the terminal for:
-- dataset collection
-- model training
-- RL / BC experiments
-- TensorBoard or offline analysis runs
-
-Examples are documented in [training/README.md](training/README.md).
-
-## Smoke test
-
-Run these from WSL unless you are using the Windows only Docker mode.
-
-1. Confirm containers
-    ```bash
-        docker compose --env-file .env.secure up -d --build
-        docker compose --env-file .env.secure ps
-        docker compose --env-file .env.secure exec -T redis redis-cli ping
-    ```
-
-2. Confirm backend authentication
-    ```bash
-        export LESNAR_USER="lesnar"
-        export LESNAR_PASS="lesnar1234"
-        export SESSION_HEADER="$(python3 scripts/request_session_token.py --username "$LESNAR_USER" --password "$LESNAR_PASS")"
-        curl -s -H "$SESSION_HEADER" http://localhost:5000/api/health | jq .status
-    ```
-
-3. Confirm the bridge appears as a drone
-    ```bash
-        curl -s -H "$SESSION_HEADER" http://localhost:5000/api/drones | jq '.drones[] | {drone_id, source, mode}'
-    ```
-
-Expected live result includes `"drone_id": "SENTINEL-01"` and `"source": "external"`.
-
-4. Confirm Mission Control support for the live drone
-    - Open the app and select `SENTINEL-01`
-    - Create a waypoint plan in Mission Control
-    - Start, pause, resume, and stop the mission from the app
-    - Verify `/api/missions/active` reflects the current state
-
-5. Confirm command propagation
-    ```bash
-        curl -s -X POST -H "$SESSION_HEADER" -H "Content-Type: application/json" \
-      http://localhost:5000/api/drones/SENTINEL-01/takeoff -d '{"altitude":10}' | jq .
-
-        curl -s -X POST -H "$SESSION_HEADER" -H "Content-Type: application/json" \
-      http://localhost:5000/api/drones/SENTINEL-01/goto -d '{"latitude":40.7129,"longitude":-74.0061,"altitude":10}' | jq .
-
-        curl -s -X POST -H "$SESSION_HEADER" -H "Content-Type: application/json" \
-      http://localhost:5000/api/drones/SENTINEL-01/land -d '{}' | jq .
-    ```
-
-The bridge logs should show receipt of each command.
-
-6. Security integrity checks
-    ```bash
-    set -a; source .env.secure; set +a
-    python3 scripts/security_posture_check.py
-    python3 scripts/verify_audit_chain.py
-    python3 scripts/dataset_integrity.py create --dataset-root dataset --manifest docs/security/dataset_manifest.json
-    python3 scripts/dataset_integrity.py verify --dataset-root dataset --manifest docs/security/dataset_manifest.json
-    ```
-
-7. Security architecture endpoint (admin only)
-    ```bash
-    curl -s -H "$SESSION_HEADER" http://localhost:5000/api/security/status | jq .
-    ```
-    Returns the full security posture: auth method, brute-force config, response headers, CORS, audit chain, user counts by role.
-
-8. User management (admin only) — add/remove operators via the web app:
-   - Go to **Settings → Operator Access Control**
-   - Or use the API directly:
-    ```bash
-    # List users
-    curl -s -H "$SESSION_HEADER" http://localhost:5000/api/auth/users | jq .
-    # Create user
-    curl -s -X POST -H "$SESSION_HEADER" -H "Content-Type: application/json" \
-      -d '{"username":"newop","role":"operator","password":"StrongPass99","display_name":"New Operator"}' \
-      http://localhost:5000/api/auth/users
-    # Update role
-    curl -s -X PUT -H "$SESSION_HEADER" -H "Content-Type: application/json" \
-      -d '{"role":"viewer"}' http://localhost:5000/api/auth/users/newop
-    # Delete user
-    curl -s -X DELETE -H "$SESSION_HEADER" http://localhost:5000/api/auth/users/newop
-    ```
-
-## Pre WSL handoff verification
-
-This section is designed to validate the Windows hosted Docker services before running PX4 and Gazebo in WSL.
-For secure operation, use `.env.secure` instead of `.env.example`.
-
-1. Windows host verification
-    ```bash
-    docker compose --env-file .env.secure up -d --build
-    docker compose --env-file .env.secure ps
-    docker compose --env-file .env.secure exec -T redis redis-cli ping
-
-    curl -s -o /dev/null -w '%{http_code}\n' http://localhost:5000/api/health
-
-    export LESNAR_USER="lesnar"
-    export LESNAR_PASS="lesnar1234"
-    export SESSION_HEADER="$(python3 scripts/request_session_token.py --username "$LESNAR_USER" --password "$LESNAR_PASS")"
-    curl -s -o /dev/null -w '%{http_code}\n' -H "$SESSION_HEADER" http://localhost:5000/api/health
-    ```
-
-2. WSL connectivity verification
-    ```bash
-    curl -s -o /dev/null -w '%{http_code}\n' -H "$SESSION_HEADER" http://localhost:5000/api/health
-
-    timeout 2 bash -c '</dev/tcp/127.0.0.1/6379' >/dev/null 2>&1 && echo redis-port-open || echo redis-port-closed
-    ```
-
-If WSL cannot reach Redis at 127.0.0.1, use the Windows only Docker mode and set the bridge `--redis-host` to `$WINDOWS_HOST`.
+## Data Storage
+
+| Data type | Storage |
+|---|---|
+| Flight telemetry (training input) | CSV per run (`telemetry_live_*.csv`) |
+| Auth users and sessions | Postgres (`auth_users`, `auth_sessions` tables) |
+| Security and audit events | Postgres + optional `audit_chain.jsonl` |
+| Process output | `logs/` + container stdout |
+
+At scale, CSV archives should be converted to Parquet for training pipelines. Operational and security events remain in Postgres.
 
 ## Troubleshooting
 
-1. Redis connection refused
-    Confirm containers are running with `docker compose ps`.
-    Confirm Redis responds with `docker compose exec -T redis redis-cli ping`.
-    Confirm the bridge is pointed at the correct Redis host.
-    If Docker is Windows only, use the `$WINDOWS_HOST` address.
+### Drone does not appear in the frontend
 
-2. Drone does not appear in the backend
-    Confirm PX4 SITL is running and MAVLink is on UDP 14540.
-    Confirm the bridge logs show successful connection to both Redis and MAVSDK.
-    Confirm the backend lists drones with `GET /api/drones`.
+Check in order:
 
-3. Mission deployment button is disabled for the live drone
-    This is no longer expected in the current live PX4 bridge flow.
-    Confirm the backend and bridge were restarted after the March 2026 external mission-control update.
-    Confirm the drone appears from `/api/drones` as `source: external`.
-    If needed, restart the bridge in `--bridge_only` mode and reload the frontend.
+1. `curl -s http://127.0.0.1:8765/status` → `gz_running: true`, `px4_running: true`, `teacher_running: true`
+2. `curl -s http://127.0.0.1:8765/models` → lists `x500_0`
+3. `curl -s -H 'X-API-Key: ...' http://127.0.0.1:5000/api/drones` → `count: 1`
 
-## Project structure
+If Gazebo is up but the drone model is missing, respawn:
 
-```text
-/
-├── backend/             # Flask API, Redis bridge, auth, mission control
-├── frontend/            # React dashboard (port 3000)
-├── training/            # PX4+Gazebo bridge + legacy AirSim training utilities
-│   └── px4_teacher_collect_gz.py  # Primary bridge/data-collector (use this)
-├── rl/                  # RL scripts (legacy AirSim-based; see rl/README.md)
-├── dataset/px4_teacher/ # Telemetry CSV output from autonomous data collection
-├── logs/                # seg_diag_*.csv from obstacle/segmentation diagnostics
-├── obstacles.sdf        # Gazebo world (85 obstacles – copy to PX4 worlds dir)
-├── auth_users.json      # User accounts (PBKDF2-SHA256 hashed passwords)
-├── docs/                # Design documentation and architecture diagrams
-├── shared/              # Shared artifacts mounted into containers
-├── docker-compose.yml   # Compose stack (backend/redis/timescaledb/adminer)
-└── .env.secure          # Secure runtime environment values (generate with bootstrap script)
-```
-
-## Security Architecture
-
-The system is hardened for demonstration and production use:
-
-| Layer | Implementation |
-|---|---|
-| Authentication | PBKDF2-SHA256 (390k iterations), `itsdangerous` signed tokens, DB-backed revocation |
-| Session TTL | 30 minutes; revoked immediately on password change |
-| Brute-force protection | 5 failed attempts in 60s → 5-minute lockout per IP+username |
-| Response headers | `X-Content-Type-Options`, `X-Frame-Options: DENY`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`, `Cache-Control: no-store` |
-| Role hierarchy | `viewer` < `operator` < `admin` — enforced per route |
-| User management | Full CRUD via API (`/api/auth/users`) and frontend Settings UI (admin only) |
-| Error sanitisation | Raw exceptions never exposed to client |
-| Audit log | Append-only event log in TimescaleDB |
-| Rate limiting | 20 req/min on login (flask-limiter) |
-
-View live security posture:
 ```bash
-curl -s -H "$SESSION_HEADER" http://localhost:5000/api/security/status | jq .
+python3 scripts/spawn_direct.py
+gz model --list | grep x500
 ```
 
-Copyright © 2026 Lesnar Autonomous Systems. All Rights Reserved.
+If the teacher is running but the backend shows 0 drones, a stale `mavsdk_server` process may be holding port 50051:
+
+```bash
+pkill -9 -f 'mavsdk_server'
+curl -s -X POST http://127.0.0.1:8765/kill-all
+curl -s -X POST http://127.0.0.1:8765/launch-all \
+  -H 'Content-Type: application/json' -d '{"drone_count":1,"gz_headless":true}'
+```
+
+The orchestrator's `instant_kill()` includes a `mavsdk_server` cleanup step to prevent this automatically.
+
+### Frontend shows on a different port or looks stale
+
+```bash
+cd ~/workspace/LesnarAI/frontend
+npm start
+```
+
+`npm start` routes through `scripts/start_frontend_guarded.sh`, which kills stale React processes before starting a clean instance on port `3000`.
+
+### Training mission starts but drone never takes off
+
+This was a confirmed bug fixed March 2026. Symptom: drone arms and teacher logs "External mission armed," but altitude stays at ~0.06 m indefinitely with lateral velocity commands.
+
+**Root cause 1**: PX4 SITL sets `in_air=True` almost immediately after the takeoff command (before physical liftoff). The old offboard transition check triggered at ground level, cancelling `AUTO.TAKEOFF` and sending zero vertical velocity.
+
+**Root cause 2**: `current_path = [(px0, py0)]` caused an immediate false "waypoint reached" signal, advancing the mission to waypoint 2 before the drone moved.
+
+Both fixes are applied in `training/px4_teacher_collect_gz.py`. If this symptom reappears in a future build, verify:
+- Offboard mode only activates once `rel_alt ≥ max(2.0, target_alt − 1.5)`
+- Waypoint advancement is skipped while `await_takeoff_alt is not None`
+
+### Adminer login fails
+
+Use Server: `timescaledb` (not `localhost`). Username and password come from `.env`. If the container is not running:
+
+```bash
+docker compose up -d adminer timescaledb
+```
+
+### Backend is up but session login fails
+
+Re-run the full verified script:
+
+```bash
+./scripts/start_stack_verified.sh
+```
+
+This re-creates the backend container and re-applies all migrations.
+
+## Known Limitations and Planned Work
+
+| Area | Current state | Planned |
+|---|---|---|
+| Obstacle avoidance | Static A\* grid, pre-loaded from SDF at startup | Real-time replanning with dynamic obstacles |
+| Gazebo memory usage | May be OOM-killed after ~2 min on memory-constrained hosts | Lighter world SDF / reduced obstacle count option |
+| Multi-drone | `drone_count > 1` supported by orchestrator but not regularly exercised | Fleet coordination and multi-agent training |
+| Student model inference | Model trained offline; not used for closed-loop control | Inference integration into teacher bridge |
+
+## Key Source Files
+
+| File | Role |
+|---|---|
+| `scripts/runtime_orchestrator.py` | Process lifecycle, run manifest, HTTP API |
+| `scripts/start_stack_verified.sh` | Canonical bring-up with smoke test |
+| `scripts/smoke_runtime.py` | End-to-end health verification |
+| `scripts/scenario_runner.py` | Headless multi-run automation |
+| `training/px4_teacher_collect_gz.py` | MAVSDK bridge, A\* navigation, telemetry collection |
+| `training/train_student_px4.py` | Student policy training from collected CSV |
+| `backend/app.py` | Flask API, Redis command dispatch, telemetry ingestion |
+| `frontend/src/components/DroneList.js` | Primary operator control panel |
+| `frontend/src/context/DroneContext.js` | Fleet state management and API wrappers |

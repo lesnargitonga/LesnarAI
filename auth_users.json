@@ -3,7 +3,7 @@
     "username": "lesnar",
     "role": "admin",
     "display_name": "lesnar",
-    "password_hash": "pbkdf2_sha256$390000$13de1703fbf4ed3553c330435cfe8397$224db23a9bd0eecd9682e095c65f4e0196723cbec3e35407fa85246a1c1f99e1"
+    "password_hash": "pbkdf2_sha256$390000$0d9b7f8be4c89a0cccd3c508f821e1b9$0c0d28ecb44d2bb75cc7cdd98f1936c741103aaee1963a83d6e4aeb32af77789"
   },
   {
     "username": "sentinnel",

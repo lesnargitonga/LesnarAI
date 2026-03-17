@@ -19,7 +19,7 @@
 }
 
 .card {
-  @apply glass-dark rounded-xl p-6 transition-all duration-300 hover:neo-glow;
+  @apply glass-dark rounded-xl p-6 transition-all duration-300 hover:shadow-neo-glow hover:border-lesnar-accent/30;
 }
 
 .btn-primary {

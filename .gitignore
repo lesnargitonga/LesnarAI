@@ -15,7 +15,6 @@ build/
 .venv/
 .venv-wsl/
 backend-env/
-airsim-env/
 legacy/
 
 # ---------- Node / Frontend ----------
@@ -40,7 +39,6 @@ desktop.ini
 
 # ---------- External / Large Dependencies ----------
 externals/
-legacy_airsim/
 
 # ---------- Data, Logs & Training Artifacts ----------
 datasets/

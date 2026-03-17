@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -72,7 +73,8 @@ class StudentNet(nn.Module):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", type=str, default=str(Path("dataset/px4_teacher/telemetry_god.csv")))
+    data_root = (os.environ.get("LESNAR_DATA_ROOT") or "dataset").strip() or "dataset"
+    ap.add_argument("--data", type=str, default=str(Path(data_root) / "px4_teacher" / "telemetry_god.csv"))
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--bs", type=int, default=128)
     ap.add_argument("--out", type=str, default=str(Path("models/student_px4_god.pt")))

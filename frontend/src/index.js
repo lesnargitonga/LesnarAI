@@ -4,10 +4,11 @@ import axios from 'axios';
 import './index.css';
 import App from './App';
 
-import { BACKEND_URL } from './config';
+import { API_BASE_URL } from './config';
 
-// Ensure REST calls hit the backend even when the frontend is not using CRA proxy.
-axios.defaults.baseURL = BACKEND_URL;
+if (API_BASE_URL) {
+  axios.defaults.baseURL = API_BASE_URL;
+}
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

@@ -1,14 +1,19 @@
 import axios from 'axios';
 import { API_BASE_URL, API_KEY } from './config';
 import { getOperatorIdentity } from './utils/operatorAudit';
+import { clearSession } from './utils/sessionAuth';
 
 export function getApiErrorMessage(error, fallback = 'Request failed.') {
     const status = error?.response?.status;
     const payload = error?.response?.data;
     const serverMessage = payload?.message || payload?.error;
+    const plainMessage = typeof error?.message === 'string' ? error.message.trim() : '';
 
     if (serverMessage) {
         return String(serverMessage);
+    }
+    if (plainMessage && plainMessage !== 'Network Error') {
+        return plainMessage;
     }
     if (status === 401) {
         return 'Your session has expired. Please sign in again.';
@@ -34,6 +39,76 @@ const api = axios.create({
         'Content-Type': 'application/json',
     },
 });
+
+const ORCHESTRATOR_BASE_URL = process.env.REACT_APP_ORCHESTRATOR_URL || 'http://127.0.0.1:8765';
+
+export async function orchestratorStatus() {
+    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/status`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+        throw new Error('Runtime orchestrator status check failed');
+    }
+    return res.json();
+}
+
+export async function orchestratorModels() {
+    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/models`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+        throw new Error('Runtime orchestrator model listing failed');
+    }
+    return res.json();
+}
+
+export async function orchestratorLaunchAll(droneCount = 1, teacherArgs = null, options = {}) {
+    const { gzHeadless } = options;
+    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/launch-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            drone_count: droneCount,
+            ...(Array.isArray(teacherArgs) && teacherArgs.length ? { teacher_args: teacherArgs } : {}),
+            ...(typeof gzHeadless === 'boolean' ? { gz_headless: gzHeadless } : {})
+        })
+    });
+    if (!res.ok) {
+        throw new Error('Runtime orchestrator launch failed');
+    }
+    return res.json();
+}
+
+export async function orchestratorKillAll() {
+    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/kill-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+        throw new Error('Runtime orchestrator kill failed');
+    }
+    return res.json();
+}
+
+export async function orchestratorStartTraining({ epochs = 20, batchSize = 128, csvIndex = 0 } = {}) {
+    const res = await fetch(`${ORCHESTRATOR_BASE_URL}/train/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            epochs,
+            batch_size: batchSize,
+            csv_index: csvIndex,
+        }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        const msg = payload?.error || payload?.message || 'Runtime orchestrator training start failed';
+        throw new Error(String(msg));
+    }
+    return payload;
+}
 
 api.interceptors.request.use((config) => {
     const actor = getOperatorIdentity();
@@ -64,6 +139,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
     (response) => response,
     (error) => {
+        if (error?.response?.status === 401) {
+            clearSession();
+        }
         error.message = getApiErrorMessage(error, error.message || 'Request failed.');
         console.error(`[API_ERROR] ${error.config?.url}:`, error.response?.data || error.message);
         return Promise.reject(error);

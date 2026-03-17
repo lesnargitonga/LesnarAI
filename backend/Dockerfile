@@ -22,4 +22,4 @@ EXPOSE 5000
 
 WORKDIR /app/backend
 
-CMD ["python", "app.py"]
+CMD ["gunicorn", "-w", "1", "--threads", "8", "-b", "0.0.0.0:5000", "wsgi:app"]

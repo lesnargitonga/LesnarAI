@@ -6,6 +6,7 @@ import fcntl
 import json
 import math
 import os
+import random
 import time
 import heapq
 from collections import deque
@@ -32,7 +33,7 @@ except Exception:
     VelocityNedYaw = None
 
 LOG_PATH = "teacher_runtime.log"
-LOCK_PATH = "/tmp/lesnar_px4_teacher_collect_gz.lock"
+_LOCK_BASENAME = "lesnar_px4_teacher_collect_gz"
 _LOCK_HANDLE = None
 
 def log(msg: str) -> None:
@@ -48,13 +49,29 @@ def log(msg: str) -> None:
 log("Teacher script started")
 
 
-def acquire_single_instance_lock() -> None:
+def _sanitize_lock_token(token: str) -> str:
+    token = (token or "").strip() or "global"
+    token = token[:64]
+    safe = []
+    for ch in token:
+        if ch.isalnum() or ch in ("_", "-"):
+            safe.append(ch)
+        else:
+            safe.append("_")
+    return "".join(safe) or "global"
+
+
+def acquire_single_instance_lock(lock_token: str) -> None:
     global _LOCK_HANDLE
-    _LOCK_HANDLE = open(LOCK_PATH, "w", encoding="utf-8")
+    safe = _sanitize_lock_token(lock_token)
+    lock_path = f"/tmp/{_LOCK_BASENAME}.{safe}.lock"
+    _LOCK_HANDLE = open(lock_path, "w", encoding="utf-8")
     try:
         fcntl.flock(_LOCK_HANDLE, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
-        raise RuntimeError("Another px4_teacher_collect_gz.py instance is already running") from exc
+        raise RuntimeError(
+            f"Another px4_teacher_collect_gz.py instance is already running for lock_token={safe!r}"
+        ) from exc
     _LOCK_HANDLE.write(str(os.getpid()))
     _LOCK_HANDLE.flush()
 
@@ -562,6 +579,201 @@ class DroneState:
         self.in_air = False
         self.mode = "UNKNOWN"
 
+        # ── Battery (MAVSDK only unless synthetic models are explicitly enabled) ──
+        self.battery_voltage_v      = None   # volts
+        self.battery_remaining_pct  = None   # 0–100
+        self.battery_current_a      = None   # amps
+
+        # ── Angular rates (from MAVSDK IMU, deg/s) ──────────────────────────
+        self.roll_rate_dps  = 0.0
+        self.pitch_rate_dps = 0.0
+        self.yaw_rate_dps   = 0.0
+
+        # ── IMU linear acceleration (body FRD frame, m/s²) ──────────────────
+        self.accel_x_ms2    = 0.0    # forward
+        self.accel_y_ms2    = 0.0    # right
+        self.accel_z_ms2    = 9.81   # down (gravity at rest)
+        self.imu_temp_deg_c = 25.0
+
+        # ── GPS quality ─────────────────────────────────────────────────────
+        self.gps_fix_type   = 0      # 0=none, 3=3D, 6=RTK-fixed
+        self.gps_num_sats   = 0
+        self.gps_hdop       = 99.9
+        self.altitude_msl_m = 0.0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REALISTIC PHYSICS MODELS  (battery · wind · environment)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def isa_temperature(alt_m: float) -> float:
+    """ISA standard atmosphere temperature (°C)."""
+    return 15.0 - 6.5 * max(0.0, alt_m) / 1000.0
+
+
+def isa_density(alt_m: float) -> float:
+    """ISA air density (kg/m³)."""
+    T_K = 288.15 - 6.5 * max(0.0, alt_m) / 1000.0
+    return 1.225 * (T_K / 288.15) ** 4.256
+
+
+class BatteryModel:
+    """Physics-based 4S LiPo battery model for DJI X500-class quadrotor.
+
+    Spec : 4S  5 000 mAh  74 Wh usable  14.8 V nominal  16.8 V full
+    Power: P  = P_hover + K_aero*v² + m*g*v_climb/η + P_avionics
+    Model: discharge curve · internal-resistance voltage sag · current integration
+    """
+    CAPACITY_AH = 5.0
+    CELLS       = 4
+    V_FULL      = 4.20 * 4      # 16.8 V
+    V_NOMINAL   = 3.70 * 4      # 14.8 V
+    V_CUTOFF    = 3.30 * 4      # 13.2 V  (hard cutoff)
+    R_INT       = 0.022         # Ω  internal resistance (4S pack)
+    MASS_KG     = 1.5           # X500 AUW
+    G           = 9.81
+    P_HOVER     = 108.0         # W  empirical hover power X500-class
+    K_AERO      = 0.55          # W·s²/m²  aerodynamic drag: P_drag = K_AERO*v²
+    P_AVIONICS  = 8.0           # W  constant electronics draw
+    ETA_CLIMB   = 0.72          # motor+prop efficiency for climb
+
+    def __init__(self):
+        self.soc              = 1.0   # state of charge [0, 1]
+        self.energy_consumed_wh = 0.0
+
+    @property
+    def voltage(self) -> float:
+        """Open-circuit voltage from SoC (simplified piecewise)."""
+        return max(self.V_CUTOFF,
+                   self.V_FULL - (1.0 - self.soc) * (self.V_FULL - self.V_CUTOFF))
+
+    @property
+    def remaining_pct(self) -> float:
+        return self.soc * 100.0
+
+    def power_draw(self, vx: float, vy: float, vz: float) -> float:
+        """Estimate instantaneous power (W) from NED velocity."""
+        v_h    = math.sqrt(vx**2 + vy**2)
+        climb  = max(0.0, -vz)                               # NED: up = negative vz
+        p_aero  = self.K_AERO * v_h**2
+        p_climb = self.MASS_KG * self.G * climb / self.ETA_CLIMB
+        return self.P_HOVER + p_aero + p_climb + self.P_AVIONICS
+
+    def step(self, vx: float, vy: float, vz: float, dt_s: float):
+        """Advance one time step. Returns (current_a, power_w)."""
+        if dt_s <= 0:
+            return 0.0, 0.0
+        p   = self.power_draw(vx, vy, vz)
+        v   = max(self.voltage, 12.0)
+        i   = p / v
+        dah = i * dt_s / 3600.0
+        self.soc = max(0.0, self.soc - dah / self.CAPACITY_AH)
+        self.energy_consumed_wh += p * dt_s / 3600.0
+        return i, p
+
+    def flight_time_remaining(self, vx: float, vy: float, vz: float) -> float:
+        """Estimated remaining airborne time (s) at current draw."""
+        p = max(1.0, self.power_draw(vx, vy, vz))
+        wh_left = self.soc * self.CAPACITY_AH * self.voltage / 1000.0
+        return wh_left / p * 3600.0
+
+
+class WindModel:
+    """Ornstein-Uhlenbeck wind simulation in NED frame.
+
+    Generates correlated, slowly varying wind with realistic gusts.
+    Typical range: 0–8 m/s with max gusts ~13 m/s.
+    """
+    THETA = 0.04   # mean-reversion rate  (s⁻¹)
+    SIGMA = 0.18   # volatility per √s    (m/s/√s)
+    MU_N  = 0.0    # long-term mean north  (m/s)
+    MU_E  = 0.0    # long-term mean east   (m/s)
+
+    def __init__(self, seed: int | None = None):
+        rng = random.Random(seed)
+        self.north = rng.gauss(1.5, 1.2)
+        self.east  = rng.gauss(0.5, 1.2)
+        self.up    = 0.0
+        self._rng  = rng
+
+    def step(self, dt_s: float) -> None:
+        sq = math.sqrt(max(dt_s, 0.0))
+        self.north += self.THETA * (self.MU_N - self.north) * dt_s + self.SIGMA * sq * self._rng.gauss(0, 1)
+        self.east  += self.THETA * (self.MU_E - self.east)  * dt_s + self.SIGMA * sq * self._rng.gauss(0, 1)
+        self.north = max(-14.0, min(14.0, self.north))
+        self.east  = max(-14.0, min(14.0, self.east))
+
+    @property
+    def speed(self) -> float:
+        return math.sqrt(self.north**2 + self.east**2)
+
+    @property
+    def direction_deg(self) -> float:
+        """Wind-FROM direction, meteorological convention (°True)."""
+        return (math.degrees(math.atan2(-self.east, -self.north)) + 360) % 360
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENRICHED TELEMETRY LISTENERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def battery_listener(drone, state):
+    """Read battery voltage and remaining % from MAVSDK."""
+    try:
+        async for batt in drone.telemetry.battery():
+            if batt.voltage_v is not None:
+                state.battery_voltage_v = float(batt.voltage_v)
+            rp = batt.remaining_percent
+            if rp is not None:
+                # MAVSDK versions differ: some 0..1, some 0..100
+                state.battery_remaining_pct = float(rp * 100.0) if rp <= 1.0 else float(rp)
+    except Exception:
+        pass
+
+
+async def imu_listener(drone, state):
+    """Read IMU angular rates + linear acceleration from MAVSDK."""
+    try:
+        async for imu in drone.telemetry.imu():
+            av = imu.angular_velocity_frd
+            if av is not None:
+                state.roll_rate_dps  = math.degrees(float(av.forward_rad_s))
+                state.pitch_rate_dps = math.degrees(float(av.right_rad_s))
+                state.yaw_rate_dps   = math.degrees(float(av.down_rad_s))
+            accel = imu.acceleration_frd
+            if accel is not None:
+                state.accel_x_ms2 = float(accel.forward_m_s2)
+                state.accel_y_ms2 = float(accel.right_m_s2)
+                state.accel_z_ms2 = float(accel.down_m_s2)
+            if hasattr(imu, 'temperature_degc') and imu.temperature_degc is not None:
+                state.imu_temp_deg_c = float(imu.temperature_degc)
+    except Exception:
+        pass
+
+
+async def gps_quality_listener(drone, state):
+    """Read GPS fix type and satellite count."""
+    try:
+        async for gps_info in drone.telemetry.gps_info():
+            state.gps_num_sats = int(gps_info.num_satellites)
+            ft = gps_info.fix_type
+            state.gps_fix_type = int(ft.value) if hasattr(ft, 'value') else int(ft)
+    except Exception:
+        pass
+
+
+async def raw_gps_listener(drone, state):
+    """Read HDOP and MSL altitude from raw GPS."""
+    try:
+        async for raw in drone.telemetry.raw_gps():
+            if raw.hdop is not None:
+                state.gps_hdop = float(raw.hdop)
+            alt = getattr(raw, 'absolute_altitude_m', None)
+            if alt is not None:
+                state.altitude_msl_m = float(alt)
+    except Exception:
+        pass
+
 
 async def apply_demo_px4_params(drone) -> None:
     """Best-effort PX4 parameter tuning for SITL/app-control demos."""
@@ -675,6 +887,16 @@ async def collect_data(args):
         raise RuntimeError("MAVSDK not available in this environment. Use --offline.")
 
     log("--> Starting teacher (ONLINE)...")
+
+    # Ensure the output path exists early so runs always leave an auditable artifact,
+    # even if MAVSDK connection fails before the first telemetry row is written.
+    try:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.touch(exist_ok=True)
+    except Exception:
+        pass
+
     world_map = Map(args.sdf_path)
     log("--> Map loaded.")
     grid = GridMap(world_map.obstacles, resolution=1.0, margin=1.5)
@@ -741,6 +963,10 @@ async def collect_data(args):
     asyncio.create_task(armed_listener(drone, dstate))
     asyncio.create_task(in_air_listener(drone, dstate))
     asyncio.create_task(flight_mode_listener(drone, dstate))
+    asyncio.create_task(battery_listener(drone, dstate))
+    asyncio.create_task(imu_listener(drone, dstate))
+    asyncio.create_task(gps_quality_listener(drone, dstate))
+    asyncio.create_task(raw_gps_listener(drone, dstate))
     if redis_client:
         asyncio.create_task(redis_telemetry_pump(redis_client, dstate, args.drone_id))
 
@@ -803,6 +1029,59 @@ async def collect_data(args):
 
     takeoff_target_alt = None
 
+    async def arm_vehicle_best_effort(context: str) -> bool:
+        if dstate.armed:
+            return True
+        try:
+            await drone.action.arm()
+            await asyncio.sleep(1.5)
+            return True
+        except Exception as exc:
+            if 'COMMAND_DENIED' in str(exc).upper():
+                log(f"!! {context} arm denied, re-applying demo PX4 params and retrying once...")
+                try:
+                    await apply_demo_px4_params(drone)
+                    await asyncio.sleep(0.25)
+                    await drone.action.arm()
+                    await asyncio.sleep(1.5)
+                    return True
+                except Exception as retry_exc:
+                    log(f"!! {context} arm retry failed: {retry_exc}")
+                    return False
+            log(f"!! {context} arm failed: {exc}")
+            return False
+
+    async def trigger_takeoff_best_effort(target_alt: float, context: str) -> bool:
+        target_alt = max(1.5, float(target_alt))
+        if not await arm_vehicle_best_effort(context):
+            return False
+        try:
+            await drone.action.set_takeoff_altitude(target_alt)
+        except Exception:
+            pass
+        try:
+            await drone.action.takeoff()
+            await asyncio.sleep(1.0)
+            return True
+        except Exception as exc:
+            if 'COMMAND_DENIED' in str(exc).upper():
+                log(f"!! {context} takeoff denied, re-applying demo PX4 params and retrying once...")
+                try:
+                    await apply_demo_px4_params(drone)
+                    await asyncio.sleep(0.25)
+                    try:
+                        await drone.action.set_takeoff_altitude(target_alt)
+                    except Exception:
+                        pass
+                    await drone.action.takeoff()
+                    await asyncio.sleep(1.0)
+                    return True
+                except Exception as retry_exc:
+                    log(f"!! {context} takeoff retry failed: {retry_exc}")
+                    return False
+            log(f"!! {context} takeoff failed: {exc}")
+            return False
+
     f = open(args.out, "w", newline="", encoding="utf-8")
     writer = csv.writer(f)
 
@@ -816,6 +1095,7 @@ async def collect_data(args):
     seg_log_f.flush()
 
     header = [
+        # ───── original 24 columns ─────
         "timestamp",
         "lat",
         "lon",
@@ -840,12 +1120,75 @@ async def collect_data(args):
         "lidar_json",
         "goal_x",
         "goal_y",
+        # ───── new 34 enriched columns ─────
+        # attitude
+        "roll_deg",
+        "pitch_deg",
+        # angular rates
+        "roll_rate_dps",
+        "pitch_rate_dps",
+        "yaw_rate_dps",
+        # body accelerations
+        "accel_fwd_ms2",
+        "accel_right_ms2",
+        "accel_down_ms2",
+        # battery / power
+        "battery_voltage_v",
+        "battery_current_a",
+        "battery_remaining_pct",
+        "power_draw_w",
+        "energy_consumed_wh",
+        "flight_time_remaining_s",
+        # wind / environment
+        "wind_north_mps",
+        "wind_east_mps",
+        "wind_speed_mps",
+        "wind_dir_deg",
+        "temperature_deg_c",
+        "air_density_kg_m3",
+        # navigation
+        "ground_speed_mps",
+        "course_over_ground_deg",
+        "distance_to_goal_m",
+        "path_wps_remaining",
+        "mission_elapsed_s",
+        "total_distance_flown_m",
+        "flight_phase",
+        # GPS quality
+        "gps_fix_type",
+        "gps_num_sats",
+        "gps_hdop",
+        "altitude_msl_m",
+        # obstacle / airspeed
+        "obstacle_count_near",
+        "effective_airspeed_mps",
+        # flags
+        "is_replanning",
+        "is_recovering",
     ]
     writer.writerow(header)
 
     start_time = time.time()
     last_step = time.time()
     run_forever = float(args.duration) <= 0.0
+
+    # ── Environment/physics simulation policy ───────────────────────────────────────
+    # We keep *environment stressors* (e.g., wind) available for realism/training,
+    # but we do NOT fabricate system-result telemetry (e.g., battery %) by default.
+    enable_synthetic_models = bool(getattr(args, 'enable_synthetic_models', False))
+    disable_wind_model = bool(getattr(args, 'disable_wind_model', False))
+    enable_battery_model = bool(getattr(args, 'enable_battery_model', False))
+    if enable_synthetic_models:
+        enable_battery_model = True
+        disable_wind_model = False
+
+    wind_model = None if disable_wind_model else WindModel()
+    battery_model = BatteryModel() if enable_battery_model else None
+    total_distance_m   = 0.0
+    last_logged_px, last_logged_py = 0.0, 0.0
+    airborne_since  = None   # set once the drone first lifts off
+    _is_replanning  = False
+    _is_recovering  = False
 
     # Command smoothing / limits (stability)
     prev_vx_cmd = 0.0
@@ -973,7 +1316,26 @@ async def collect_data(args):
                 continue
             last_step = now
 
+            # ── Environment + optional battery model ────────────────────────────
+            _batt_i = None
+            _batt_p = None
+            if wind_model is not None:
+                wind_model.step(dt)
+            if battery_model is not None:
+                _batt_i, _batt_p = battery_model.step(dstate.vx, dstate.vy, dstate.vz, dt)
+                # Battery model outputs are logged in CSV as model fields, but we do NOT
+                # publish/override main battery telemetry unless MAVSDK provides it.
+                dstate.battery_current_a = _batt_i
+            # Airborne timer
+            if dstate.in_air and airborne_since is None:
+                airborne_since = time.time()
+
             px, py = get_local_pos()
+            # Odometer
+            _d = math.sqrt((px - last_logged_px)**2 + (py - last_logged_py)**2)
+            if _d < 10.0:
+                total_distance_m += _d
+            last_logged_px, last_logged_py = px, py
 
             if (
                 args.bridge_only
@@ -982,7 +1344,13 @@ async def collect_data(args):
                 and external_mission.get("await_takeoff_alt") is not None
             ):
                 target_alt = float(external_mission.get("await_takeoff_alt") or 0.0)
-                if dstate.in_air or dstate.rel_alt >= max(1.0, target_alt - 0.7):
+                # Only transition to offboard navigation once the drone has physically climbed
+                # to near the target altitude via PX4 auto-takeoff.  Using dstate.in_air alone
+                # is unreliable – PX4 SITL reports in_air=True almost immediately after the
+                # takeoff command even when the drone is still on the ground, which would
+                # prematurely cancel AUTO.TAKEOFF and lock the drone at ground level in OFFBOARD
+                # mode with vz=0.  Require rel_alt to be within 1.5 m of the target altitude.
+                if dstate.rel_alt >= max(2.0, target_alt - 1.5):
                     try:
                         if not offboard_active:
                             await ensure_offboard_started()
@@ -1062,7 +1430,12 @@ async def collect_data(args):
                 if i == len(current_path) - 1 and d < 2.0:
                     if args.bridge_only:
                         if external_mission and external_mission.get("status") == "ACTIVE":
-                            if external_mission["current_idx"] + 1 < len(external_mission["waypoints"]):
+                            # Don't advance while the drone is still climbing to takeoff altitude.
+                            # The initial current_path = [(px0, py0)] would otherwise trigger an
+                            # immediate "goal reached" false-positive before the drone has moved.
+                            if external_mission.get("await_takeoff_alt") is not None:
+                                pass  # still climbing – hold current waypoint index
+                            elif external_mission["current_idx"] + 1 < len(external_mission["waypoints"]):
                                 external_mission["current_idx"] += 1
                                 wp = external_mission["waypoints"][external_mission["current_idx"]]
                                 set_goal_from_global(float(wp[0]), float(wp[1]))
@@ -1190,7 +1563,14 @@ async def collect_data(args):
 
             # Desired speed: fast cruise with heading-aware taper and true frontal obstacle braking.
             desired_speed = min(float(args.max_speed), max(float(args.base_speed), 0.70 * dist))
-            if args.bridge_only and takeoff_target_alt is None and not (external_mission and external_mission.get("status") == "ACTIVE") and abs(goal_x - px) < 0.5 and abs(goal_y - py) < 0.5:
+            bridge_idle_hold = (
+                args.bridge_only
+                and takeoff_target_alt is None
+                and not (external_mission and external_mission.get("status") == "ACTIVE")
+                and abs(goal_x - px) < 0.5
+                and abs(goal_y - py) < 0.5
+            )
+            if bridge_idle_hold:
                 desired_speed = 0.0
             if front_eval_dist >= slow_down_dist:
                 obstacle_factor = 1.0
@@ -1200,7 +1580,15 @@ async def collect_data(args):
                     0.0,
                     1.0,
                 )
-            yaw_target_nom = math.degrees(math.atan2(nav_uy, nav_ux)) if (abs(nav_ux) + abs(nav_uy)) > 1e-6 else math.degrees(math.atan2(dy, dx))
+            yaw_target_nom = (
+                map_yaw_deg
+                if bridge_idle_hold
+                else (
+                    math.degrees(math.atan2(nav_uy, nav_ux))
+                    if (abs(nav_ux) + abs(nav_uy)) > 1e-6
+                    else math.degrees(math.atan2(dy, dx))
+                )
+            )
             if args.precision_mode:
                 yaw_crosstrack_correction = clamp(
                     -args.crosstrack_kp * cross_track_m,
@@ -1427,7 +1815,40 @@ async def collect_data(args):
                     VelocityNedYaw(vx_cmd, vy_cmd, vz_cmd, cmd_yaw)
                 )
 
+            # ── Derived quantities for the enriched row ──────────────────────────────
+            _gs    = math.sqrt(dstate.vx**2 + dstate.vy**2)
+            _cog   = (math.degrees(math.atan2(dstate.vy, dstate.vx)) + 360) % 360
+            _d2g   = math.sqrt((px - goal_x)**2 + (py - goal_y)**2)
+            _mission_elapsed = (time.time() - airborne_since) if airborne_since else 0.0
+            _alt_m = max(0.0, dstate.rel_alt)
+            _temp  = isa_temperature(_alt_m)
+            _rho   = isa_density(_alt_m)
+            # effective airspeed = ground speed corrected by wind (simplified scalar)
+            _wind_speed = wind_model.speed if wind_model is not None else 0.0
+            _eas   = max(0.0, _gs - _wind_speed * 0.5)
+            # obstacle count within slow_down_dist
+            try:
+                _obs_near = int(np.sum(sim_lidar < slow_down_dist))
+            except Exception:
+                _obs_near = 0
+            # path waypoints remaining
+            _wps_rem = len(waypoints) - wp_idx if 'waypoints' in dir() else 0
+            # flight phase: 0=GROUND 1=TAKEOFF 2=CRUISE 3=APPROACH 4=HOVER 5=LAND
+            if not dstate.in_air:
+                _phase = 0
+            elif dstate.rel_alt < (args.alt * 0.8):
+                _phase = 1  # still climbing toward cruise
+            elif _d2g < 4.0:
+                _phase = 4  # hover near goal
+            elif _d2g < 15.0:
+                _phase = 3  # approach
+            elif _gs < 0.3:
+                _phase = 4  # stationary airborne
+            else:
+                _phase = 2  # cruise
+
             row = [
+                # ── original 24 columns ──
                 time.time(),
                 dstate.lat,
                 dstate.lon,
@@ -1452,6 +1873,42 @@ async def collect_data(args):
                 json.dumps(sim_lidar.tolist()),
                 goal_x,
                 goal_y,
+                # ── new 34 enriched columns ──
+                round(dstate.roll,  4),
+                round(dstate.pitch, 4),
+                round(dstate.roll_rate_dps,  4),
+                round(dstate.pitch_rate_dps, 4),
+                round(dstate.yaw_rate_dps,   4),
+                round(dstate.accel_x_ms2, 4),
+                round(dstate.accel_y_ms2, 4),
+                round(dstate.accel_z_ms2, 4),
+                (round(dstate.battery_voltage_v, 3) if dstate.battery_voltage_v is not None else ""),
+                (round(dstate.battery_current_a, 3) if dstate.battery_current_a is not None else ""),
+                (round(dstate.battery_remaining_pct, 2) if dstate.battery_remaining_pct is not None else ""),
+                (round(_batt_p, 2) if _batt_p is not None else ""),
+                (round(battery_model.energy_consumed_wh, 4) if battery_model is not None else ""),
+                (round(battery_model.flight_time_remaining(dstate.vx, dstate.vy, dstate.vz), 1) if battery_model is not None else ""),
+                (round(wind_model.north, 4) if wind_model is not None else ""),
+                (round(wind_model.east, 4) if wind_model is not None else ""),
+                (round(wind_model.speed, 4) if wind_model is not None else ""),
+                (round(wind_model.direction_deg, 2) if wind_model is not None else ""),
+                round(_temp,  2),
+                round(_rho,   5),
+                round(_gs,    4),
+                round(_cog,   2),
+                round(_d2g,   3),
+                _wps_rem,
+                round(_mission_elapsed, 2),
+                round(total_distance_m, 3),
+                _phase,
+                dstate.gps_fix_type,
+                dstate.gps_num_sats,
+                round(dstate.gps_hdop, 2),
+                round(dstate.altitude_msl_m, 3),
+                _obs_near,
+                round(_eas, 4),
+                int(_is_replanning),
+                int(_is_recovering),
             ]
 
             # --- Redis Bridge Publish ---
@@ -1464,12 +1921,21 @@ async def collect_data(args):
                     "altitude": dstate.rel_alt,
                     "heading": dstate.yaw,
                     "speed": math.sqrt(dstate.vx**2 + dstate.vy**2),
-                    "battery": 99.0,
                     "armed": dstate.armed,
                     "in_air": dstate.in_air,
                     "mode": dstate.mode or "TEACHER_BRIDGE",
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
+                if dstate.battery_remaining_pct is not None:
+                    telemetry_data["battery"] = round(float(dstate.battery_remaining_pct), 1)
+                if wind_model is not None:
+                    telemetry_data["environment"] = {
+                        "wind_north_mps": float(wind_model.north),
+                        "wind_east_mps": float(wind_model.east),
+                        "wind_speed_mps": float(wind_model.speed),
+                        "wind_dir_deg": float(wind_model.direction_deg),
+                        "synthetic_environment": True,
+                    }
                 if external_mission and external_mission.get("status") in ("ACTIVE", "PAUSED"):
                     total_waypoints = len(external_mission.get("waypoints") or [])
                     current_idx = int(external_mission.get("current_idx") or 0)
@@ -1647,20 +2113,14 @@ async def collect_data(args):
                                     "await_takeoff_alt": None,
                                 }
                                 target_alt = max(1.5, float(parsed_waypoints[0][2]))
-                                if not dstate.armed:
-                                    try:
-                                        await drone.action.arm()
-                                        await asyncio.sleep(1.5)
-                                    except Exception as mission_arm_exc:
-                                        log(f"!! Mission arm warning: {mission_arm_exc}")
                                 if not dstate.in_air and dstate.rel_alt < max(0.8, target_alt - 0.7):
-                                    try:
-                                        await drone.action.set_takeoff_altitude(target_alt)
-                                    except Exception:
-                                        pass
-                                    await drone.action.takeoff()
-                                    external_mission["await_takeoff_alt"] = target_alt
-                                    log(f"--> External mission armed; awaiting climb to {target_alt:.1f}m")
+                                    takeoff_ok = await trigger_takeoff_best_effort(target_alt, "Mission")
+                                    if takeoff_ok:
+                                        external_mission["await_takeoff_alt"] = target_alt
+                                        log(f"--> External mission armed; awaiting climb to {target_alt:.1f}m")
+                                    else:
+                                        external_mission["status"] = "FAILED"
+                                        log("!! External mission aborted: takeoff could not be initiated")
                                 else:
                                     if not offboard_active:
                                         await ensure_offboard_started()
@@ -1884,7 +2344,14 @@ def collect_data_offline(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--drone-id", type=str, default=os.environ.get("DRONE_ID", "SENTINEL-01"))
-    parser.add_argument("--out", type=str, default="dataset/px4_teacher/telemetry_god.csv")
+    parser.add_argument(
+        "--no_lock",
+        action="store_true",
+        help="Disable the single-instance lock (advanced/debug). Default lock is per --drone-id.",
+    )
+    data_root = (os.environ.get("LESNAR_DATA_ROOT") or "dataset").strip() or "dataset"
+    default_out = str(Path(data_root) / "px4_teacher" / "telemetry_god.csv")
+    parser.add_argument("--out", type=str, default=default_out)
     parser.add_argument("--system", type=str, default="udpin://0.0.0.0:14540")
     parser.add_argument("--duration", type=float, default=0.0, help="Run duration in seconds. Use 0 for continuous run.")
     parser.add_argument("--bridge_only", action="store_true", help="Run as a passive control bridge for the app without autonomous teacher navigation.")
@@ -1899,6 +2366,9 @@ if __name__ == "__main__":
     parser.add_argument("--no_safe_presentation_profile", action="store_false", dest="safe_presentation_profile", help="Disable conservative demo safety profile.")
     parser.set_defaults(safe_presentation_profile=True)
     parser.add_argument("--precision_mode", action="store_true", help="Enable strict path-tracking Falcon mode.")
+    parser.add_argument("--disable_wind_model", action="store_true", help="Disable wind/environment model (wind is enabled by default).")
+    parser.add_argument("--enable_battery_model", action="store_true", help="Enable battery/power model fields in CSV (OFF by default; does not override MAVSDK battery telemetry).")
+    parser.add_argument("--enable_synthetic_models", action="store_true", help="Legacy alias: enable both wind model and battery model fields.")
     parser.add_argument("--no_precision_mode", action="store_false", dest="precision_mode", help="Disable Falcon precision controller.")
     parser.set_defaults(precision_mode=True)
     parser.add_argument("--obstacle_sector_deg", type=float, default=14.0, help="Front obstacle sector width in degrees.")
@@ -1997,7 +2467,8 @@ if __name__ == "__main__":
     if args.offline:
         collect_data_offline(args)
     else:
-        acquire_single_instance_lock()
+        if not args.no_lock:
+            acquire_single_instance_lock(args.drone_id)
         asyncio.run(collect_data(args))
 
 

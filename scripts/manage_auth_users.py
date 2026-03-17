@@ -1,95 +1,89 @@
 #!/usr/bin/env python3
-"""Beginner-friendly interactive auth user manager for LesnarAI."""
+"""Interactive Postgres-backed auth user manager for LesnarAI."""
 
 from __future__ import annotations
 
-import json
+import sys
+from datetime import datetime
 from pathlib import Path
+
+from flask import Flask
 
 from generate_auth_users_json import VALID_ROLES, generate_password_hash
 
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = REPO / 'auth_users.json'
-ENV_FILE = REPO / '.env.secure'
+BACKEND_DIR = REPO / 'backend'
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from db import AuthUser, db, get_database_url  # noqa: E402
 
 
 def prompt(text: str) -> str:
     return input(text).strip()
 
 
-def load_existing(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding='utf-8'))
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
+def create_app() -> Flask:
+    app = Flask(__name__)
+    app.config['SQLALCHEMY_DATABASE_URI'] = get_database_url()
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    db.init_app(app)
+    return app
 
 
-def upsert_user(users: list[dict], username: str, role: str, password: str) -> list[dict]:
-    hashed = generate_password_hash(password)
-    out = [u for u in users if str(u.get('username') or '').strip() != username]
-    out.append({
-        'username': username,
-        'role': role,
-        'display_name': username,
-        'password_hash': hashed,
-    })
-    out.sort(key=lambda item: str(item.get('username') or '').lower())
-    return out
+def list_users() -> list[AuthUser]:
+    return AuthUser.query.order_by(AuthUser.username.asc()).all()
 
 
-def update_env_secure(users: list[dict]) -> None:
-    if not ENV_FILE.exists():
-        print(f'[skip] {ENV_FILE} not found; not updating env file')
-        return
-    lines = ENV_FILE.read_text(encoding='utf-8').splitlines(keepends=True)
-    payload = json.dumps(users, separators=(',', ':'))
-    replaced = False
-    updated: list[str] = []
-    for raw in lines:
-        if raw.startswith('LESNAR_AUTH_USERS_JSON='):
-            updated.append(f'LESNAR_AUTH_USERS_JSON={payload}\n')
-            replaced = True
-        else:
-            updated.append(raw)
-    if not replaced:
-        updated.append(f'LESNAR_AUTH_USERS_JSON={payload}\n')
-    ENV_FILE.write_text(''.join(updated), encoding='utf-8')
-    print(f'[ok] updated {ENV_FILE}')
+def upsert_user(username: str, role: str, password: str, display_name: str | None = None) -> tuple[AuthUser, bool]:
+    normalized = username.strip().lower()
+    row = AuthUser.query.filter_by(username=normalized).one_or_none()
+    created = row is None
+    if row is None:
+        row = AuthUser(username=normalized)
+        db.session.add(row)
+    row.role = role
+    row.display_name = (display_name or normalized).strip()[:128]
+    row.password_hash = generate_password_hash(password)
+    row.last_password_change_at = datetime.utcnow()
+    db.session.commit()
+    return row, created
 
 
 def main() -> int:
-    output = DEFAULT_OUTPUT
-    users = load_existing(output)
-    print('LesnarAI user setup')
-    print('Roles: admin, operator, viewer')
-    print('This file can be reused later when you need new users.')
-    print('Press Enter on username when finished.\n')
+    app = create_app()
+    with app.app_context():
+        db.create_all()
 
-    while True:
-        username = prompt('Username: ')
-        if not username:
-            break
-        role = prompt('Role [admin/operator/viewer]: ').lower()
-        if role not in VALID_ROLES:
-            print('Invalid role. Use admin, operator, or viewer.\n')
-            continue
-        password = prompt('Password: ')
-        if not password:
-            print('Password cannot be empty.\n')
-            continue
-        users = upsert_user(users, username, role, password)
-        print(f'[ok] saved user {username} ({role})\n')
+        print('LesnarAI user setup (Postgres-backed)')
+        print('Roles: admin, operator, viewer')
+        current = list_users()
+        print(f'Existing users: {len(current)}')
+        for row in current:
+            print(f'  - {row.username} ({row.role})')
+        print('Press Enter on username when finished.\n')
 
-    output.write_text(json.dumps(users, indent=2) + '\n', encoding='utf-8')
-    print(f'[ok] wrote {output}')
-    update_env_secure(users)
-    print('\nNext:')
-    print('  python3 scripts/bootstrap_secure_deployment.py --auth-users-json-file auth_users.json --force')
-    print('If .env.secure already exists, your users are also written there automatically.')
+        while True:
+            username = prompt('Username: ')
+            if not username:
+                break
+            role = prompt('Role [admin/operator/viewer]: ').lower()
+            if role not in VALID_ROLES:
+                print('Invalid role. Use admin, operator, or viewer.\n')
+                continue
+            password = prompt('Password: ')
+            if not password:
+                print('Password cannot be empty.\n')
+                continue
+            display_name = prompt('Display name [optional]: ') or username
+            row, created = upsert_user(username, role, password, display_name)
+            action = 'created' if created else 'updated'
+            print(f'[ok] {action} user {row.username} ({row.role})\n')
+
+        print('\nCurrent users:')
+        for row in list_users():
+            print(f'  - {row.username} ({row.role})')
     return 0
 
 

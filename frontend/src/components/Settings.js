@@ -331,7 +331,7 @@ function Settings() {
 
       {/* User Management — admin only */}
       {isAdmin && (
-        <div className="card">
+        <div className="card space-y-8">
           <div className="flex items-center space-x-3 mb-8">
             <div className="p-2 rounded-lg bg-lesnar-accent/10 border border-lesnar-accent/20">
               <Users className="h-4 w-4 text-lesnar-accent" />

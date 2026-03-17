@@ -15,4 +15,4 @@ def send_mission_override(x: float, y: float, z: float, cmd: str = "NAVIGATE"):
     os.makedirs(os.path.dirname(SHARED_MISSION_PATH), exist_ok=True)
     with open(SHARED_MISSION_PATH, "w") as f:
         json.dump(data, f)
-    print(f"[AirSimAdapter] Sent override: {data}")
+    print(f"[LegacyAdapter] Sent override: {data}")

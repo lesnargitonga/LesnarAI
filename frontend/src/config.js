@@ -2,15 +2,20 @@ const ENV_BACKEND_URL = String(process.env.REACT_APP_BACKEND_URL || '').trim();
 const ENV_API_BASE_URL = String(process.env.REACT_APP_API_BASE_URL || '').trim();
 const runtimeHost = window.location.hostname;
 const runtimeProtocol = window.location.protocol;
-const isLocalHost = runtimeHost === 'localhost' || runtimeHost === '127.0.0.1';
+const runtimePort = window.location.port;
+const backendPort = String(process.env.REACT_APP_BACKEND_PORT || '5000').trim();
+const isDev = process.env.NODE_ENV === 'development';
+const useDevProxy = isDev && !ENV_BACKEND_URL && !ENV_API_BASE_URL;
+
+const inferredBackendUrl = `${runtimeProtocol}//${runtimeHost}${backendPort ? `:${backendPort}` : ''}`;
+const sameOriginIsBackend = runtimePort === backendPort;
 
 export const BACKEND_URL = String(
-  ENV_BACKEND_URL ||
-    (isLocalHost ? `${runtimeProtocol}//${runtimeHost}:5000` : window.location.origin)
+  ENV_BACKEND_URL || (useDevProxy ? window.location.origin : (sameOriginIsBackend ? window.location.origin : inferredBackendUrl))
 ).replace(/\/$/, '');
 
 export const API_BASE_URL = String(
-  ENV_API_BASE_URL || ENV_BACKEND_URL || ''
+  ENV_API_BASE_URL || (useDevProxy ? '' : BACKEND_URL)
 ).replace(/\/$/, '');
 
 export const SESSION_AUTH_REQUIRED = process.env.REACT_APP_REQUIRE_SESSION_AUTH === '1';

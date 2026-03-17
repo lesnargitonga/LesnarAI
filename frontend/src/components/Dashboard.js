@@ -45,23 +45,31 @@ function Dashboard({ socket, linkMetrics }) {
   const totalDrones = hasFreshFleetStatus ? fleetStatus.total_drones : drones.length;
   const armedDrones = hasFreshFleetStatus ? fleetStatus.armed_drones : drones.filter(d => getDroneFlags(d).armed).length;
   const flyingDrones = hasFreshFleetStatus ? fleetStatus.flying_drones : drones.filter(d => getDroneFlags(d).flying).length;
-  const lowBatteryDrones = hasFreshFleetStatus ? fleetStatus.low_battery_drones : drones.filter(d => (d.battery || 100) < 20).length;
+  const lowBatteryDrones = hasFreshFleetStatus
+    ? fleetStatus.low_battery_drones
+    : drones.filter(d => {
+      const { battery } = getDroneFlags(d);
+      return Number.isFinite(battery) && battery < 20;
+    }).length;
   const avgSpeed = drones.length
     ? drones.reduce((sum, drone) => sum + (drone.speed || 0), 0) / drones.length
     : 0;
 
   const integritySignal = error ? 65 : 100;
-  const telemetrySignal = Math.max(60, Math.min(100, Math.round((flyingDrones / Math.max(totalDrones || 1, 1)) * 100)));
-  const criticalDrones = drones.filter((drone) => (drone.battery || 100) < 20).slice(0, 2);
+  const telemetrySignal = Number.isFinite(linkMetrics?.telemetryAgeMs)
+    ? (linkMetrics.telemetryAgeMs <= 1500 ? 100 : linkMetrics.telemetryAgeMs <= 5000 ? 85 : 60)
+    : (drones.length > 0 ? 100 : 0);
+  const criticalDrones = drones
+    .filter((drone) => {
+      const { battery } = getDroneFlags(drone);
+      return Number.isFinite(battery) && battery < 20;
+    })
+    .slice(0, 2);
 
   const propulsionSeries = useMemo(() => {
-    const base = Math.max(0, Math.min(100, avgSpeed * 18));
-    const trend = drones.length ? Math.min(20, flyingDrones * 2.5) : 0;
-    return Array.from({ length: 12 }, (_, index) => {
-      const wave = Math.sin((index / 11) * Math.PI * 1.6) * 6;
-      return { val: Math.max(5, Math.min(98, base + trend + wave)) };
-    });
-  }, [avgSpeed, drones.length, flyingDrones]);
+    const val = Number.isFinite(avgSpeed) ? avgSpeed : 0;
+    return Array.from({ length: 12 }, () => ({ val }));
+  }, [avgSpeed]);
 
   return (
     <div className="p-8 pb-12 space-y-10 fade-in">
@@ -207,11 +215,15 @@ function Dashboard({ socket, linkMetrics }) {
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-navy-black p-3 rounded-lg border border-white/5">
                 <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">Inference Latency</p>
-                <p className="text-lg font-black text-lesnar-success font-mono">{Math.max(18, 32 - Math.round(avgSpeed * 2))}ms</p>
+                <p className="text-lg font-black text-lesnar-success font-mono">
+                  {Number.isFinite(linkMetrics?.latencyMs) ? `${Math.round(linkMetrics.latencyMs)}ms` : '—'}
+                </p>
               </div>
               <div className="bg-navy-black p-3 rounded-lg border border-white/5">
                 <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">Telemetry Link</p>
-                <p className="text-lg font-black text-white font-mono">{integritySignal}%</p>
+                <p className="text-lg font-black text-white font-mono">
+                  {Number.isFinite(linkMetrics?.telemetryAgeMs) ? `${Math.round(linkMetrics.telemetryAgeMs)}ms` : '—'}
+                </p>
               </div>
               <div className="bg-navy-black p-3 rounded-lg border border-white/5">
                 <p className="text-[9px] text-gray-500 font-mono tracking-widest uppercase mb-1">Fleet Avg Speed</p>
@@ -233,7 +245,7 @@ function Dashboard({ socket, linkMetrics }) {
             <div className="space-y-3">
               {criticalDrones.length > 0 ? criticalDrones.map((drone) => (
                 <div key={drone.drone_id} className="text-[10px] font-mono text-white/70 py-2 border-b border-white/5 last:border-b-0">
-                  <span className="text-lesnar-danger font-bold">[!]</span> {drone.drone_id}: Low battery {Math.round(drone.battery || 0)}%
+                  <span className="text-lesnar-danger font-bold">[!]</span> {drone.drone_id}: Low battery {Math.round(getDroneFlags(drone).battery)}%
                 </div>
               )) : (
                 <div className="text-[10px] font-mono text-white/70 py-2">
@@ -299,7 +311,9 @@ const IntegrityBar = React.memo(function IntegrityBar({ label, value, color }) {
 
 const DroneCard = React.memo(function DroneCard({ drone }) {
   const { altitude, speed, armed: isArmed, flying: isFlying, battery } = getDroneFlags(drone);
-  const isLowBattery = battery < 20;
+  const hasBattery = Number.isFinite(battery);
+  const isLowBattery = hasBattery && battery < 20;
+  const telemetryMissing = Boolean(drone?.telemetry_missing);
 
   const statusLabel = isLowBattery ? 'LOW POWER' : isFlying ? 'AIRBORNE' : isArmed ? 'ARMED' : 'STANDBY';
   const statusColor = isLowBattery ? 'text-lesnar-danger' : isFlying ? 'text-lesnar-success' : isArmed ? 'text-lesnar-warning' : 'text-gray-400';
@@ -324,23 +338,29 @@ const DroneCard = React.memo(function DroneCard({ drone }) {
       <div className="grid grid-cols-2 gap-4 mb-6">
         <div className="space-y-1">
           <p className="text-[8px] font-mono text-gray-600 uppercase tracking-widest leading-none">Altitude</p>
-          <p className="text-sm font-mono text-white font-bold">{altitude.toFixed(1)}<span className="text-[8px] ml-0.5 text-gray-500 font-normal">M</span></p>
+          <p className="text-sm font-mono text-white font-bold">
+            {Number.isFinite(altitude) ? altitude.toFixed(1) : '—'}
+            <span className="text-[8px] ml-0.5 text-gray-500 font-normal">M</span>
+          </p>
         </div>
         <div className="space-y-1">
           <p className="text-[8px] font-mono text-gray-600 uppercase tracking-widest leading-none">Velocity</p>
-          <p className="text-sm font-mono text-white font-bold">{speed.toFixed(1)}<span className="text-[8px] ml-0.5 text-gray-500 font-normal">M/S</span></p>
+          <p className="text-sm font-mono text-white font-bold">
+            {Number.isFinite(speed) ? speed.toFixed(1) : '—'}
+            <span className="text-[8px] ml-0.5 text-gray-500 font-normal">M/S</span>
+          </p>
         </div>
       </div>
 
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Zap className={`h-3 w-3 ${battery < 20 ? 'text-lesnar-danger animate-bounce' : 'text-lesnar-success'}`} />
-          <span className="text-[11px] font-mono text-white font-bold">{Math.round(battery)}%</span>
+          <Zap className={`h-3 w-3 ${isLowBattery ? 'text-lesnar-danger animate-bounce' : 'text-lesnar-success'}`} />
+          <span className="text-[11px] font-mono text-white font-bold">{hasBattery ? `${Math.round(battery)}%` : '—'}</span>
         </div>
         <div className="flex items-center space-x-3 text-gray-600">
           <div className="flex items-center">
             <Wifi className="h-3 w-3 mr-1" />
-            <span className="text-[8px] font-mono uppercase tracking-tighter">Link_OK</span>
+            <span className="text-[8px] font-mono uppercase tracking-tighter">{telemetryMissing ? 'NO_LINK' : 'LINK_OK'}</span>
           </div>
         </div>
       </div>

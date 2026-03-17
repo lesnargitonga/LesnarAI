@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import api from '../api';
-import { clearSession, getStoredSession, sessionAuthRequired, storeSession } from '../utils/sessionAuth';
+import { clearSession, getStoredSession, sessionAuthRequired, storeSession, subscribeSession } from '../utils/sessionAuth';
 
 function AuthGate({ children }) {
   const required = sessionAuthRequired();
@@ -9,6 +10,7 @@ function AuthGate({ children }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
@@ -34,6 +36,14 @@ function AuthGate({ children }) {
         setSession(null);
       })
       .finally(() => setChecking(false));
+  }, [required]);
+
+  useEffect(() => {
+    if (!required) return undefined;
+    return subscribeSession((nextSession) => {
+      setSession(nextSession || null);
+      setChecking(false);
+    });
   }, [required]);
 
   const handleLogin = async (event) => {
@@ -75,7 +85,18 @@ function AuthGate({ children }) {
         </div>
         <div className="space-y-2">
           <label className="text-[10px] font-mono uppercase tracking-widest text-gray-400">Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm font-mono text-white" />
+          <div className="relative">
+            <input type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 pr-12 text-sm font-mono text-white" />
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              className="absolute inset-y-0 right-0 flex items-center justify-center px-4 text-gray-500 hover:text-white transition-colors"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-pressed={showPassword}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
         {error && <div className="rounded-xl border border-lesnar-danger/30 bg-lesnar-danger/10 px-4 py-3 text-[10px] font-mono uppercase tracking-widest text-lesnar-danger">{error}</div>}
         <button disabled={pending} className="w-full btn-primary py-3 disabled:opacity-40">{pending ? 'AUTHENTICATING...' : 'LOGIN'}</button>

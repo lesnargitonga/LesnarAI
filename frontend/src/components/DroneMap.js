@@ -28,8 +28,10 @@ L.Icon.Default.mergeOptions({
 const createTacticalDroneIcon = (drone) => {
   const { altitude, battery, flying } = getDroneFlags(drone);
   const heading = Number(drone.heading) || 0;
-  const isCritical = drone.mode === 'EMERGENCY' || battery < 20;
-  const color = isCritical ? '#FF1F6D' : (flying || altitude > 1 ? '#00FF9D' : '#00FDFF');
+  const hasBattery = Number.isFinite(battery);
+  const altitudeForColor = Number.isFinite(altitude) ? altitude : 0;
+  const isCritical = drone.mode === 'EMERGENCY' || (hasBattery && battery < 20);
+  const color = isCritical ? '#FF1F6D' : (flying || altitudeForColor > 1 ? '#00FF9D' : '#00FDFF');
 
   return L.divIcon({
     className: 'tactical-drone-marker',
@@ -237,9 +239,12 @@ function DroneMap({ socket, linkMetrics }) {
           {!replayMode && drones
             .filter((drone) => Number.isFinite(Number(drone.latitude)) && Number.isFinite(Number(drone.longitude)))
             .map((drone) => {
-            const altitude = Number(drone.altitude) || 0;
-            const speed = Number(drone.speed) || 0;
-            const battery = Number(drone.battery) || 0;
+            const { altitude, speed, battery } = getDroneFlags(drone);
+            const altitudeText = Number.isFinite(altitude) ? altitude.toFixed(1) : '—';
+            const speedText = Number.isFinite(speed) ? speed.toFixed(2) : '—';
+            const hasBattery = Number.isFinite(battery);
+            const batteryText = hasBattery ? `${battery.toFixed(0)}%` : '—';
+            const isLowBattery = hasBattery && battery < 20;
             return (
             <Marker
               key={drone.drone_id}
@@ -261,15 +266,15 @@ function DroneMap({ socket, linkMetrics }) {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500 uppercase">Altitude</span>
-                      <span className="text-white">{altitude.toFixed(1)}M</span>
+                      <span className="text-white">{altitudeText}M</span>
                     </div>
                     <div className="flex justify-between font-bold">
                       <span className="text-gray-500 uppercase">Velocity</span>
-                      <span className="text-lesnar-accent">{speed.toFixed(2)} M/S</span>
+                      <span className="text-lesnar-accent">{speedText} M/S</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500 uppercase">Power</span>
-                      <span className={battery < 20 ? 'text-lesnar-danger' : 'text-white'}>{battery.toFixed(0)}%</span>
+                      <span className={isLowBattery ? 'text-lesnar-danger' : 'text-white'}>{batteryText}</span>
                     </div>
                   </div>
 
@@ -302,6 +307,8 @@ function DroneMap({ socket, linkMetrics }) {
             {drones.map((drone) => {
               const { altitude, speed, flying } = getDroneFlags(drone);
               const isSelected = selectedDroneId === drone.drone_id;
+              const altitudeText = Number.isFinite(altitude) ? altitude.toFixed(1) : '—';
+              const speedText = Number.isFinite(speed) ? speed.toFixed(1) : '—';
               return (
               <div
                 key={drone.drone_id}
@@ -316,8 +323,8 @@ function DroneMap({ socket, linkMetrics }) {
                   <div className={`h-1.5 w-1.5 rounded-full ${flying ? 'bg-lesnar-success animate-pulse' : 'bg-gray-600'}`} />
                 </div>
                 <div className="flex justify-between text-[8px] font-mono text-gray-500">
-                  <span>ALT: {altitude.toFixed(1)}M</span>
-                  <span>SPD: {speed.toFixed(1)}M/S</span>
+                  <span>ALT: {altitudeText}M</span>
+                  <span>SPD: {speedText}M/S</span>
                 </div>
               </div>
             );
@@ -328,10 +335,10 @@ function DroneMap({ socket, linkMetrics }) {
             <div className="bg-lesnar-accent/5 p-4 rounded-xl border border-lesnar-accent/10">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] font-mono text-gray-400 uppercase">Signal Stability</span>
-                <span className={`text-[10px] font-mono ${linkMetrics?.degradedMode ? 'text-lesnar-warning' : 'text-lesnar-success'}`}>{linkMetrics?.degradedMode ? 'DEGRADED' : '98%'}</span>
+                <span className={`text-[10px] font-mono ${linkMetrics?.degradedMode ? 'text-lesnar-warning' : 'text-lesnar-success'}`}>{linkMetrics?.degradedMode ? 'DEGRADED' : 'NOMINAL'}</span>
               </div>
               <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                <div className={`h-full ${linkMetrics?.degradedMode ? 'w-[55%] bg-lesnar-warning' : 'w-[98%] bg-lesnar-accent'}`} />
+                <div className={`h-full ${linkMetrics?.degradedMode ? 'w-[55%] bg-lesnar-warning' : 'w-full bg-lesnar-accent'}`} />
               </div>
             </div>
           </div>

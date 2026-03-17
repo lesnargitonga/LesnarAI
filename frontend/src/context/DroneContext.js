@@ -1,10 +1,24 @@
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
-import api from '../api';
+import api, { orchestratorModels } from '../api';
 import { appendOperatorAudit, getOperatorIdentity } from '../utils/operatorAudit';
 import { TELEMETRY_STALE_MS, getTelemetryAgeMs, isTelemetryStale } from '../utils/operational';
 
 const isDemoDrone = (drone) => String(drone?.drone_id || '').toUpperCase().startsWith('LESNAR-DEMO-');
 const sanitizeDrones = (drones) => (Array.isArray(drones) ? drones.filter((drone) => !isDemoDrone(drone)) : []);
+
+function deriveFleetStatus(drones) {
+  const list = Array.isArray(drones) ? drones : [];
+  const total = list.length;
+  const armed = list.filter((drone) => Boolean(drone?.armed)).length;
+  const flying = list.filter((drone) => Boolean(drone?.in_air) || Boolean(drone?.flying)).length;
+  const lowBattery = list.filter((drone) => Number(drone?.battery ?? 100) < 20).length;
+  return {
+    total_drones: total,
+    armed_drones: armed,
+    flying_drones: flying,
+    low_battery_drones: lowBattery,
+  };
+}
 
 // Initial state
 const initialState = {
@@ -12,6 +26,15 @@ const initialState = {
   selectedDrone: null,
   loading: false,
   error: null,
+  gazeboSync: {
+    enabled: true,
+    reachable: false,
+    gzRunning: false,
+    models: [],
+    checkedAt: null,
+    refreshing: false,
+    error: null,
+  },
   telemetry: null,
   lastTelemetryReceivedAt: null,
   fleetStatus: {
@@ -33,7 +56,8 @@ const actionTypes = {
   SELECT_DRONE: 'SELECT_DRONE',
   UPDATE_TELEMETRY: 'UPDATE_TELEMETRY',
   UPDATE_FLEET_STATUS: 'UPDATE_FLEET_STATUS',
-  SET_LAST_TELEMETRY_AT: 'SET_LAST_TELEMETRY_AT'
+  SET_LAST_TELEMETRY_AT: 'SET_LAST_TELEMETRY_AT',
+  SET_GAZEBO_SYNC: 'SET_GAZEBO_SYNC'
 };
 
 function ensureConfirmed(response, fallbackMessage) {
@@ -163,6 +187,9 @@ function droneReducer(state, action) {
       };
     
     case actionTypes.UPDATE_DRONE:
+      if (!action.payload || !action.payload.drone_id) {
+        return state;
+      }
       return {
         ...state,
         drones: state.drones.map(drone => 
@@ -186,11 +213,28 @@ function droneReducer(state, action) {
       };
     
     case actionTypes.UPDATE_TELEMETRY:
-      return {
-        ...state,
-        telemetry: action.payload,
-        drones: action.payload.telemetry || state.drones
-      };
+      {
+        const incoming = Array.isArray(action.payload?.telemetry) ? action.payload.telemetry : [];
+        if (!Array.isArray(state.drones) || state.drones.length === 0) {
+          return {
+            ...state,
+            telemetry: action.payload,
+            drones: incoming,
+          };
+        }
+        const incomingById = new Map(incoming.map((drone) => [String(drone?.drone_id || ''), drone]));
+        const merged = state.drones.map((existing) => {
+          const id = String(existing?.drone_id || '');
+          const update = incomingById.get(id);
+          if (!update) return existing;
+          return { ...existing, ...update, source: existing?.source || 'gazebo' };
+        });
+        return {
+          ...state,
+          telemetry: action.payload,
+          drones: merged,
+        };
+      }
     
     case actionTypes.UPDATE_FLEET_STATUS:
       return {
@@ -202,6 +246,15 @@ function droneReducer(state, action) {
       return {
         ...state,
         lastTelemetryReceivedAt: action.payload
+      };
+
+    case actionTypes.SET_GAZEBO_SYNC:
+      return {
+        ...state,
+        gazeboSync: {
+          ...state.gazeboSync,
+          ...(action.payload || {})
+        }
       };
     
     default:
@@ -220,9 +273,90 @@ export function DroneProvider({ children, socketConnected = false }) {
   const fetchDrones = async () => {
     try {
       dispatch({ type: actionTypes.SET_LOADING, payload: true });
-      const response = await api.get('/api/drones');
-      dispatch({ type: actionTypes.SET_DRONES, payload: sanitizeDrones(response.data.drones) });
+
+      // Ground-truth: only show what Gazebo says exists.
+      let modelsPayload = null;
+      try {
+        modelsPayload = await orchestratorModels();
+      } catch (error) {
+        dispatch({
+          type: actionTypes.SET_GAZEBO_SYNC,
+          payload: {
+            reachable: false,
+            gzRunning: false,
+            models: [],
+            checkedAt: null,
+            refreshing: false,
+            error: error?.message || 'Unable to reach runtime orchestrator',
+          },
+        });
+        dispatch({ type: actionTypes.SET_DRONES, payload: [] });
+        dispatch({ type: actionTypes.SET_ERROR, payload: 'Gazebo sync unavailable (runtime orchestrator not reachable).' });
+        return;
+      }
+
+      const gazeboModels = Array.isArray(modelsPayload?.models) ? modelsPayload.models.map(String) : [];
+      const gzRunning = Boolean(modelsPayload?.gz_running);
+      dispatch({
+        type: actionTypes.SET_GAZEBO_SYNC,
+        payload: {
+          reachable: true,
+          gzRunning,
+          models: gazeboModels,
+          checkedAt: typeof modelsPayload?.checked_at === 'number' ? modelsPayload.checked_at * 1000 : null,
+          refreshing: Boolean(modelsPayload?.refreshing),
+          error: modelsPayload?.error || null,
+        },
+      });
+
+      // If Gazebo isn't running, there are no assets to display.
+      if (!gzRunning || gazeboModels.length === 0) {
+        dispatch({ type: actionTypes.SET_DRONES, payload: [] });
+        dispatch({ type: actionTypes.UPDATE_FLEET_STATUS, payload: deriveFleetStatus([]) });
+        dispatch({ type: actionTypes.SET_LAST_TELEMETRY_AT, payload: Date.now() });
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
+        return;
+      }
+
+      // Optional enrichment: overlay backend telemetry, but never invent extra drones.
+      let backendDrones = [];
+      try {
+        const response = await api.get('/api/drones');
+        backendDrones = sanitizeDrones(response?.data?.drones);
+      } catch {
+        backendDrones = [];
+      }
+
+      const modelSet = new Set(gazeboModels);
+      const byId = new Map();
+      backendDrones.forEach((drone) => {
+        const id = String(drone?.drone_id || '');
+        if (modelSet.has(id)) {
+          byId.set(id, drone);
+        }
+      });
+
+      const synced = gazeboModels
+        .slice()
+        .sort((a, b) => a.localeCompare(b))
+        .map((modelId) => {
+          const enriched = byId.get(modelId);
+          if (enriched) {
+            return { ...enriched, source: 'gazebo' };
+          }
+          return {
+            drone_id: modelId,
+            source: 'gazebo',
+            telemetry_missing: true,
+            armed: false,
+            in_air: false,
+          };
+        });
+
+      dispatch({ type: actionTypes.SET_DRONES, payload: synced });
+      dispatch({ type: actionTypes.UPDATE_FLEET_STATUS, payload: deriveFleetStatus(synced) });
       dispatch({ type: actionTypes.SET_LAST_TELEMETRY_AT, payload: Date.now() });
+      dispatch({ type: actionTypes.SET_ERROR, payload: null });
     } catch (error) {
       dispatch({ type: actionTypes.SET_ERROR, payload: error.message });
     }
@@ -252,6 +386,21 @@ export function DroneProvider({ children, socketConnected = false }) {
         dispatch({ type: actionTypes.SET_ERROR, payload: null });
         return response.data;
       }
+    } catch (error) {
+      dispatch({ type: actionTypes.SET_ERROR, payload: error.message });
+      throw error;
+    }
+  };
+
+  const getDroneState = async (droneId) => {
+    try {
+      const response = await api.get(`/api/drones/${droneId}`);
+      const drone = response?.data?.drone || null;
+      if (drone?.drone_id) {
+        dispatch({ type: actionTypes.UPDATE_DRONE, payload: drone });
+        dispatch({ type: actionTypes.SET_ERROR, payload: null });
+      }
+      return drone;
     } catch (error) {
       dispatch({ type: actionTypes.SET_ERROR, payload: error.message });
       throw error;
@@ -397,16 +546,32 @@ export function DroneProvider({ children, socketConnected = false }) {
   };
 
   const updateTelemetry = useCallback((telemetryData) => {
+    const sanitized = sanitizeDrones(telemetryData?.telemetry);
+    const gazeboModelSet = new Set((state.gazeboSync?.models || []).map(String));
+    const filteredTelemetry = state.gazeboSync?.enabled
+      ? (gazeboModelSet.size > 0
+        ? sanitized.filter((drone) => gazeboModelSet.has(String(drone?.drone_id || '')))
+        : [])
+      : sanitized;
+
     const sanitizedTelemetry = {
       ...telemetryData,
-      telemetry: sanitizeDrones(telemetryData?.telemetry),
+      telemetry: filteredTelemetry,
     };
     dispatch({ type: actionTypes.UPDATE_TELEMETRY, payload: sanitizedTelemetry });
     dispatch({ type: actionTypes.SET_LAST_TELEMETRY_AT, payload: Date.now() });
+
+    // Keep dashboard counts aligned with the asset list (Gazebo ground-truth).
+    // If there are no Gazebo models, treat it as zero assets regardless of backend fleet_status.
+    if (state.gazeboSync?.enabled) {
+      dispatch({ type: actionTypes.UPDATE_FLEET_STATUS, payload: deriveFleetStatus(filteredTelemetry) });
+      return;
+    }
+
     if (telemetryData.fleet_status) {
       dispatch({ type: actionTypes.UPDATE_FLEET_STATUS, payload: telemetryData.fleet_status });
     }
-  }, []);
+  }, [state.gazeboSync?.models, state.gazeboSync?.enabled]);
 
   const selectDrone = (drone) => {
     dispatch({ type: actionTypes.SELECT_DRONE, payload: drone });
@@ -455,7 +620,8 @@ export function DroneProvider({ children, socketConnected = false }) {
     emergencyLandAll,
     updateTelemetry,
     selectDrone,
-    clearError
+    clearError,
+    getDroneState
   };
 
   return (

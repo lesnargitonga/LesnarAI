@@ -115,6 +115,19 @@ class AuthSession(db.Model):
     metadata_json = db.Column(db.Text, nullable=True)
 
 
+class AuthUser(db.Model):
+    __tablename__ = 'auth_users'
+
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    role = db.Column(db.String(32), nullable=False, index=True)
+    display_name = db.Column(db.String(128), nullable=True)
+    password_hash = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_password_change_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
 class TelemetrySample(db.Model):
     __tablename__ = 'telemetry_samples'
 

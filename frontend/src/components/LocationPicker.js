@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import axios from 'axios';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { Search, MapPin, Check, Navigation } from 'lucide-react';
+import api from '../api';
 import { MAP_TILE_ATTRIBUTION, MAP_TILE_FALLBACK_URL, MAP_TILE_URL } from '../config';
 import 'leaflet/dist/leaflet.css';
 
@@ -63,7 +63,7 @@ export default function LocationPicker({
     setLoading(true);
     const t = setTimeout(async () => {
       try {
-        const res = await axios.get('/api/geocode/suggest', { params: { q } });
+        const res = await api.get('/api/geocode/suggest', { params: { q } });
         if (cancelled) return;
         if (res.data?.success) setSuggestions(res.data.results || []);
       } catch (e) {

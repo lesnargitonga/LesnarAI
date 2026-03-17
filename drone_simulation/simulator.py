@@ -478,52 +478,61 @@ class DroneSimulator:
             time.sleep(0.1)  # 10Hz update rate
 
 class DroneFleet:
-    """Manage multiple drones"""
-    
+    """Manage multiple drones."""
+
     def __init__(self):
         self.drones: Dict[str, DroneSimulator] = {}
         self.logger = logging.getLogger(__name__)
-    
-    def add_drone(self, drone_id: str, position: Tuple[float, float, float] = None) -> bool:
-        """Add a new drone to the fleet"""
+
+    def add_drone(
+        self,
+        drone_id: str,
+        position: Tuple[float, float, float] = None,
+        start_simulation: bool = True,
+    ) -> bool:
+        """Add a new drone to the fleet.
+
+        If start_simulation is False, the drone will be created without starting the simulation thread.
+        """
         if drone_id in self.drones:
             self.logger.warning(f"Drone {drone_id} already exists")
             return False
-        
+
         if position is None:
             # Random position around NYC area
             position = (
                 40.7128 + random.uniform(-0.1, 0.1),
                 -74.0060 + random.uniform(-0.1, 0.1),
-                0
+                0,
             )
-        
+
         self.drones[drone_id] = DroneSimulator(drone_id, position)
-        self.drones[drone_id].start_simulation()
+        if start_simulation:
+            self.drones[drone_id].start_simulation()
         self.logger.info(f"Added drone {drone_id} to fleet")
         return True
-    
+
     def remove_drone(self, drone_id: str) -> bool:
-        """Remove a drone from the fleet"""
+        """Remove a drone from the fleet."""
         if drone_id not in self.drones:
             self.logger.warning(f"Drone {drone_id} not found")
             return False
-        
+
         self.drones[drone_id].stop_simulation()
         del self.drones[drone_id]
         self.logger.info(f"Removed drone {drone_id} from fleet")
         return True
-    
+
     def get_drone(self, drone_id: str) -> Optional[DroneSimulator]:
-        """Get a specific drone"""
+        """Get a specific drone."""
         return self.drones.get(drone_id)
-    
+
     def get_all_states(self) -> List[DroneState]:
-        """Get states of all drones"""
+        """Get states of all drones."""
         return [drone.get_state() for drone in self.drones.values()]
-    
+
     def emergency_land_all(self):
-        """Emergency land all drones"""
+        """Emergency land all drones."""
         for drone in self.drones.values():
             drone.land()
         self.logger.warning("Emergency landing initiated for all drones")

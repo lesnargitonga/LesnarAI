@@ -11,7 +11,10 @@ function Header({ onMenuClick, connected, themeMode, onThemeToggle, linkMetrics 
   const navigate = useNavigate();
   const { drones, telemetryStale, emergencyLandAll } = useDrones();
   const session = getStoredSession();
-  const alertCount = drones.filter((drone) => (Number(drone.battery) || 100) < 20).length;
+  const alertCount = drones.filter((drone) => {
+    const { battery } = getDroneFlags(drone);
+    return Number.isFinite(battery) && battery < 20;
+  }).length;
   const actionableCount = drones.filter((drone) => {
     const flags = getDroneFlags(drone);
     return flags.armed || flags.flying;
