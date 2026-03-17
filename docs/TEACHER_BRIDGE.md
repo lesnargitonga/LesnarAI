@@ -417,15 +417,56 @@ nav_uy = (1 - avoid_blend) × route_uy + avoid_blend × avoid_uy
 
 Default gains: `avoidance_gain = 1.2`, `max_avoidance_blend = 0.85`.
 
+#### Vector Cancellation Safety
+
+When route and avoidance vectors are antiparallel (cancel to near-zero), the blended `nav_norm < 1e-6`. The fallback escapes along the **avoidance vector** rather than the route vector:
+```python
+if nav_norm < 1e-6:
+    if avoid_norm > 1e-6:
+        nav_ux, nav_uy = avoid_ux, avoid_uy   # escape AWAY from obstacle
+    else:
+        nav_ux, nav_uy = route_ux, route_uy   # last resort
+```
+This prevents the drone from being sent directly into the obstacle it's trying to avoid.
+
+#### Front-Blocked Override
+
+When `front_blocked_persisted` is active, the nav direction is **always overridden** to the avoidance escape vector (not just speed-reduced). Three-tier response:
+
+| Condition | Action |
+|---|---|
+| Room + avoidance available | Override direction to `avoid_ux/uy`, crawl at `min_crawl_speed` |
+| Tight corridor + avoidance | Override direction, slow to `min_crawl_speed × 0.5` |
+| No avoidance vector | Full stop (`desired_speed = 0.0`) |
+
+This eliminates the old bug where the drone would crawl forward *into* the wall it detected.
+
+#### Stuck-Hover Timer
+
+An independent speed-based stall detector runs **outside** the `front_blocked_persisted` branch, preventing oscillation between blocked/unblocked states from resetting the timer:
+
+```python
+if speed_now < 0.4 and near_obstacle:
+    stuck_elapsed += dt
+    if stuck_elapsed > 2.0:   # 2 s threshold
+        pick_new_goal() → replan
+else:
+    stuck_elapsed = 0
+```
+
+Uses function-level state (`collect_data._stuck_hover_since`, `_stuck_hover_ticks`) so it accumulates continuously regardless of other subsystem states.
+
 #### Deliberative Layer (A\* Replanning)
 
 **Anti-stall replanning** — strike-based, every `progress_window_sec` (10 s):
-- Strike counts only if moved < `min_progress_m` (1.5 m) AND not in goal grace period AND not turning AND not in obstacle braking
+- Strike counts if moved < `min_progress_m` (1.5 m) AND not in goal grace period AND not turning
+- When `obstacle_braking` is active, strikes are **double-counted** (`+= 2` per window) to accelerate escape from stuck-near-obstacle situations
 - After `replan_strikes` (5) consecutive strikes: pick new goal, replan
 - Guarded by `replan_cooldown_sec` (3.5 s) between consecutive replans
 
 **Proactive threat-triggered replan**:
-- If `geom_threat ≥ 0.85` persists for ≥ 0.5 s → immediate A\* replan to current goal
+- If `geom_threat ≥ 0.65` persists for ≥ 0.4 s → immediate A\* replan to current goal
+- If A\* to current goal fails, picks a **new random goal** instead of silently failing
 - Uses the same path → smooth → validate pipeline as the initial plan
 - Resets `threat_trigger_since` after each replan
 
@@ -524,14 +565,15 @@ If tilt target exceeds `max_tilt_deg = 12°`, scale lateral commands back to hol
 
 ### 5.5 Anti-Stall & Deadlock Escape
 
-Three overlapping systems prevent the drone from getting permanently stuck:
+Five overlapping systems prevent the drone from getting permanently stuck:
 
 | System | Trigger | Response |
 |---|---|---|
-| Low-progress strikes | < 1.5 m in 10 s window × 5 strikes | Pick new random goal, replan |
+| Low-progress strikes | < 1.5 m in 10 s window × 5 strikes (2× near obstacles) | Pick new random goal, replan |
 | Heading-stall strikes | Heading error > 110° + no progress × 12 ticks | Force replan |
 | Oscillation escape | Nav direction reversal detected | 1.5 s lateral escape then replan |
-| Proactive replan | `geom_threat ≥ 0.85` for 0.5 s | Immediate A\* replan to current goal |
+| Proactive replan | `geom_threat ≥ 0.65` for 0.4 s | A\* replan to current goal (or new goal on failure) |
+| Stuck-hover timer | Ground speed < 0.4 m/s near obstacle for 2 s | Pick new goal, replan |
 
 All are cooldown-guarded (`replan_cooldown_sec = 3.5 s`) to prevent thrashing.
 
@@ -740,6 +782,15 @@ This feed also surfaces in the dashboard **Analytics** panel.
 | `--heading_stall_grace_sec` | `2.5` | Grace period after each replan (s) |
 | `--metrics_log_sec` | `1.5` | Seconds between FALCON quality log lines |
 
+### Student / Domain Randomization / Dynamic Obstacles
+
+| Flag | Default | Description |
+|---|---|---|
+| `--student_model` | `""` | Path to trained student `.pt` checkpoint for closed-loop inference |
+| `--student_blend` | `0.0` | Teacher/student command blend ratio (0.0=teacher only, 1.0=student only) |
+| `--domain_randomization` | false | Enable `SensorNoiseModel` noise injection for sim2real transfer |
+| `--dynamic_obstacles` | false | Enable LIDAR-driven dynamic grid updates via `detect_dynamic_obstacles()` |
+
 ### Physics Models
 
 | Flag | Default | Description |
@@ -818,11 +869,16 @@ The report is written to `<csv_stem>_analysis.json` unless `--analysis_report` i
 ### Avoidance
 - Potential-field reactive avoidance with tangential escape
 - Two-layer blend (reactive + deliberative)
-- Proactive threat-triggered replan at `geom_threat ≥ 0.85`
+- Proactive threat-triggered replan at `geom_threat ≥ 0.65` (0.4 s persistence)
 - Full override at `geom_threat ≥ 0.90`
+- Vector cancellation safety: falls back to avoidance escape (not route) when vectors cancel
+- Front-blocked override: always steers away from obstacle, never crawls into it
+- Independent stuck-hover timer (speed < 0.4 m/s near obstacle for 2 s → replan)
+- Obstacle-braking double-count: progress strikes accumulate 2× faster near obstacles
 - Path clearance validation post-plan
 - 360° side-threat scan during turns
 - Oscillation/thrashing detector with lateral escape
+- A\* replan fallback: picks new goal when replan to current goal fails
 
 ### Safety
 - Roll/pitch hard + soft guards
@@ -944,6 +1000,9 @@ GridMap and A\* output are never visualised. Could export:
 | ~~No evaluation harness~~ | ~~Can't measure student quality without live flight~~ | ✅ Fixed: `evaluate_student.py` (§13.G) |
 | ~~A\* grid rebuilt from scratch on replan~~ | ~~O(W×H) BFS each replan can stall loop~~ | ✅ Fixed: Incremental clearance updates via `mark_dynamic_obstacle()` |
 | ~~Offline mode lacks path smoothing~~ | ~~Offline CSVs have staircase paths~~ | ✅ Fixed: `smooth_path()` added to `collect_data_offline()` |
+| ~~Obstacle freeze: drone stuck in front of wall forever~~ | ~~4 cascading bugs: strikes suppressed by `obstacle_braking`, vector cancellation sent drone into obstacle, front-blocked crawled forward into wall, stuck-hover timer never accumulated~~ | ✅ Fixed: obstacle-braking accelerates strikes, vector cancellation escapes away, front-blocked overrides direction, independent stuck-hover timer (§5.2) |
+| AI Lab Redis commands not handled by teacher | Frontend AI Lab sends `enable_student`, `enable_noise`, `update_avoidance` etc. but teacher ignores them | ⚠️ Open: teacher Redis listener only handles arm/disarm/takeoff/land/goto/mission commands |
+| No `/eval/run` orchestrator endpoint | Evaluation tab calls `POST /eval/run` which doesn't exist yet | ⚠️ Open: needs handler in `scripts/runtime_orchestrator.py` |
 | ~~`_wps_rem` always 0 in online mode~~ | ~~`path_wps_remaining` column always zero~~ | ✅ Fixed: Wired to `len(current_path) - path_index` |
 | ~~Freeze/hover deadlock~~ | ~~Drone freezes near obstacles when front_blocked_persisted + geom critical~~ | ✅ Fixed: Lateral escape crawl + stuck-hover timer with forced replan |
 | No domain randomization feedback | Noise added but not compared to real sensor noise | Add real hardware noise profiling |
