@@ -21,13 +21,22 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from train_student_px4 import (
-    ENRICHED_SCALAR_KEYS,
-    ENRICHED_FEATURE_DIM,
-    LEGACY_FEATURE_DIM,
-    StudentNet,
-    _safe_float,
-)
+try:
+    from training.train_student_px4 import (
+        ENRICHED_SCALAR_KEYS,
+        ENRICHED_FEATURE_DIM,
+        LEGACY_FEATURE_DIM,
+        StudentNet,
+        _safe_float,
+    )
+except ImportError:
+    from train_student_px4 import (
+        ENRICHED_SCALAR_KEYS,
+        ENRICHED_FEATURE_DIM,
+        LEGACY_FEATURE_DIM,
+        StudentNet,
+        _safe_float,
+    )
 
 
 def load_eval_data(csv_paths: list[Path], enriched: bool):

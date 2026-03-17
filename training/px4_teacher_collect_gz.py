@@ -955,7 +955,10 @@ class StudentController:
         self.scalar_keys = checkpoint.get("scalar_keys", [])
 
         # Reconstruct the network
-        from training.train_student_px4 import StudentNet
+        try:
+            from training.train_student_px4 import StudentNet
+        except ImportError:
+            from train_student_px4 import StudentNet
         self.net = StudentNet(in_dim=self.in_dim, out_dim=4).to(device)
         state = checkpoint.get("state_dict", checkpoint)
         self.net.load_state_dict(state)
