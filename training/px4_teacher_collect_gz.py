@@ -1700,13 +1700,18 @@ async def collect_data(args):
                     last_geom_clearance_m < (hard_stop_dist + 0.7)
                 )
 
-                if moved < float(args.min_progress_m) and not in_goal_grace and not turning_in_place and not obstacle_braking:
+                if moved < float(args.min_progress_m) and not in_goal_grace and not turning_in_place:
                     low_progress_strikes += 1
+                    # Accelerate replan when stuck near an obstacle — this is
+                    # exactly the scenario where replanning is most critical.
+                    if obstacle_braking:
+                        low_progress_strikes += 1  # double-count
                     log(
                         "Low progress strike "
                         f"{low_progress_strikes}/{int(args.replan_strikes)} "
                         f"(moved={moved:.2f}m, head_err={last_heading_err_abs:.1f}deg, "
-                        f"front={last_front_min_dist:.2f}m, geom={last_geom_clearance_m:.2f}m)"
+                        f"front={last_front_min_dist:.2f}m, geom={last_geom_clearance_m:.2f}m"
+                        f"{' BRAKING' if obstacle_braking else ''})"
                     )
                 else:
                     low_progress_strikes = 0
@@ -1888,11 +1893,11 @@ async def collect_data(args):
             # reports a sustained high threat (obstacle in our path that A*
             # didn't fully clear), replan immediately rather than waiting for
             # the stall-strike counter to accumulate.
-            if geom_threat >= 0.85:
+            if geom_threat >= 0.65:
                 if threat_trigger_since is None:
                     threat_trigger_since = now
                 elif (
-                    (now - threat_trigger_since) >= 0.5
+                    (now - threat_trigger_since) >= 0.4
                     and (now - last_replan_at) >= float(args.replan_cooldown_sec)
                     and not (args.bridge_only and external_mission and external_mission.get("status") == "ACTIVE")
                 ):
@@ -1903,6 +1908,11 @@ async def collect_data(args):
                         stride = 2 if args.precision_mode else 3
                         current_path = path[::stride] + [path[-1]]
                         path_index = 0
+                    else:
+                        # A* failed to current goal — pick a new one
+                        goal_x, goal_y = pick_new_goal()
+                        goal_set_at = time.time()
+                        current_path = []
                     last_replan_at = now
                     threat_trigger_since = None
             else:
@@ -1960,6 +1970,10 @@ async def collect_data(args):
             if nav_norm > 1e-6:
                 nav_ux /= nav_norm
                 nav_uy /= nav_norm
+            elif avoid_norm > 1e-6:
+                # Route and avoidance vectors cancelled out — follow avoidance
+                # escape direction instead of driving into the obstacle.
+                nav_ux, nav_uy = avoid_ux, avoid_uy
             else:
                 nav_ux, nav_uy = route_ux, route_uy
 
@@ -2036,37 +2050,47 @@ async def collect_data(args):
                 desired_speed *= attitude_factor
 
             if front_blocked_persisted:
-                # Avoid dead-stop lockups unless blockage is persistent and geometry is truly critical.
-                if (geom_clearance_m > (hard_stop_dist + 0.45)) and (yaw_err_abs < 45.0):
-                    crawl = min(float(args.min_crawl_speed), float(args.max_speed))
-                    desired_speed = max(desired_speed, crawl)
+                # Always override nav direction to avoidance when front is blocked —
+                # never crawl forward into the obstacle.
+                if avoid_norm > 0.1:
+                    nav_ux, nav_uy = avoid_ux, avoid_uy
+                if geom_clearance_m > (hard_stop_dist + 0.45) and avoid_norm > 0.1:
+                    # Room to manoeuvre: lateral escape at crawl speed
+                    desired_speed = min(float(args.min_crawl_speed), float(args.max_speed))
+                elif avoid_norm > 0.1:
+                    # Tight but avoidance vector exists — slow lateral crawl
+                    desired_speed = min(float(args.min_crawl_speed) * 0.5, 0.35)
                 else:
-                    # --- Freeze-escape: allow lateral crawl along avoidance vector ---
-                    # Instead of hard 0.0, allow a minimal lateral crawl if an
-                    # avoidance vector exists, so the drone can slide away from
-                    # the obstacle rather than hovering indefinitely.
-                    if avoid_norm > 0.1:
-                        # Override nav direction to purely avoidance (escape)
-                        nav_ux, nav_uy = avoid_ux, avoid_uy
-                        desired_speed = min(float(args.min_crawl_speed) * 0.5, 0.35)
-                    else:
-                        desired_speed = 0.0
-                    # Stuck hover timer: if we've been near-zero for too long, force replan
-                    if not hasattr(collect_data, '_stuck_hover_since'):
-                        collect_data._stuck_hover_since = now
-                    elif (now - collect_data._stuck_hover_since) > 3.0:
-                        log(f"Stuck-hover escape -> force replan (front={front_eval_dist:.2f} geom={geom_clearance_m:.2f})")
-                        goal_x, goal_y = pick_new_goal()
-                        goal_set_at = time.time()
-                        last_replan_at = now
-                        current_path = []
-                        heading_stall_strikes = 0
-                        low_progress_strikes = 0
-                        collect_data._stuck_hover_since = now
-                        continue
-            else:
-                # Reset stuck timer when not in front-blocked state
+                    desired_speed = 0.0
+
+            # Stuck-hover timer runs INDEPENDENTLY of front_blocked oscillations.
+            # Tracks cumulative time with near-zero ground speed near obstacles.
+            if not hasattr(collect_data, '_stuck_hover_since'):
                 collect_data._stuck_hover_since = None
+                collect_data._stuck_hover_speed_acc = 0.0
+                collect_data._stuck_hover_ticks = 0
+            speed_now = math.hypot(dstate.vx, dstate.vy)
+            near_obstacle = geom_clearance_m < (slow_down_dist + 1.0) or front_eval_dist < slow_down_dist
+            if speed_now < 0.4 and near_obstacle:
+                if collect_data._stuck_hover_since is None:
+                    collect_data._stuck_hover_since = now
+                collect_data._stuck_hover_ticks += 1
+                stuck_elapsed = now - collect_data._stuck_hover_since
+                if stuck_elapsed > 2.0 and (now - last_replan_at) >= float(args.replan_cooldown_sec):
+                    log(f"Stuck-hover escape -> force replan ({stuck_elapsed:.1f}s stuck, "
+                        f"speed={speed_now:.2f}, front={front_eval_dist:.2f}, geom={geom_clearance_m:.2f})")
+                    goal_x, goal_y = pick_new_goal()
+                    goal_set_at = time.time()
+                    last_replan_at = now
+                    current_path = []
+                    heading_stall_strikes = 0
+                    low_progress_strikes = 0
+                    collect_data._stuck_hover_since = None
+                    collect_data._stuck_hover_ticks = 0
+                    continue
+            else:
+                collect_data._stuck_hover_since = None
+                collect_data._stuck_hover_ticks = 0
 
             speed_planar_now = math.hypot(dstate.vx, dstate.vy)
             attitude_unstable = (

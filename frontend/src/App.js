@@ -17,6 +17,7 @@ import DroneList from './components/DroneList';
 import MissionControl from './components/MissionControl';
 import Analytics from './components/Analytics';
 import Settings from './components/Settings';
+import AILab from './components/AILab';
 import DiagnosticTerminal from './components/DiagnosticTerminal';
 import ErrorBoundary from './components/ErrorBoundary';
 import AuthGate from './components/AuthGate';
@@ -126,6 +127,7 @@ function App() {
                   <Route path="/drones" element={<DroneList socket={socket} />} />
                   <Route path="/missions" element={<MissionControl socket={socket} linkMetrics={linkMetrics} />} />
                   <Route path="/analytics" element={<Analytics socket={socket} linkMetrics={linkMetrics} />} />
+                  <Route path="/ai-lab" element={<AILab />} />
                   <Route path="/settings" element={<Settings />} />
                 </Routes>
               </ErrorBoundary>

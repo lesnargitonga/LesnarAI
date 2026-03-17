@@ -1937,6 +1937,30 @@ def stop_mission(drone_id):
         logger.error(f"Error stopping mission for drone {drone_id}: {e}")
         return _safe_error('Failed to stop mission', e)
 
+@app.route('/api/drones/<drone_id>/command', methods=['POST'])
+@require_role('operator')
+def send_drone_command(drone_id):
+    """Send an arbitrary command to the teacher bridge via Redis.
+
+    Used by the AI Lab to toggle features like student inference,
+    domain randomization, dynamic obstacles, and avoidance parameter updates.
+    """
+    try:
+        data = request.get_json() or {}
+        action = data.get('action')
+        if not action or not isinstance(action, str):
+            return jsonify({'success': False, 'error': 'action field is required'}), 400
+        params = {k: v for k, v in data.items() if k not in ('action', 'operator_context')}
+        published = _publish_command(drone_id, action, params)
+        return jsonify({
+            'success': True,
+            'accepted': published,
+            'message': f'Command "{action}" sent to {drone_id}' + ('' if published else ' (no subscriber)'),
+        })
+    except Exception as e:
+        logger.error(f"Error sending command to drone {drone_id}: {e}")
+        return _safe_error('Failed to send command', e)
+
 @app.route('/api/emergency', methods=['POST'])
 @require_role('admin')
 @limiter.limit("5 per minute")

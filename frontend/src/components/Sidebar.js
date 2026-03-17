@@ -9,7 +9,8 @@ import {
   Settings,
   X,
   Zap,
-  Activity
+  Activity,
+  Brain
 } from 'lucide-react';
 import api from '../api';
 import { useDrones } from '../context/DroneContext';
@@ -21,6 +22,7 @@ const navigation = [
   { name: 'Drone Fleet', href: '/drones', icon: Rocket },
   { name: 'Mission Control', href: '/missions', icon: Navigation },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
+  { name: 'AI Lab', href: '/ai-lab', icon: Brain },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
