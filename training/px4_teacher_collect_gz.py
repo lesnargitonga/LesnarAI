@@ -517,6 +517,29 @@ class GridMap:
                         if o.is_inside(wx, wy, margin):
                             self.grid[gx, gy] = True
 
+        # Precompute clearance field: for each free cell, approximate distance
+        # (in grid cells) to the nearest blocked cell using BFS wavefront.  This
+        # is then used by A* to penalise paths that run close to obstacle edges.
+        print("Computing clearance field...")
+        self.clearance = np.full((self.width, self.height), fill_value=999, dtype=np.int16)
+        from collections import deque as _deque
+        bfs_queue = _deque()
+        for gx in range(self.width):
+            for gy in range(self.height):
+                if self.grid[gx, gy]:
+                    self.clearance[gx, gy] = 0
+                    bfs_queue.append((gx, gy))
+        while bfs_queue:
+            x, y = bfs_queue.popleft()
+            d = int(self.clearance[x, y])
+            for dx2, dy2 in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+                nx2, ny2 = x + dx2, y + dy2
+                if 0 <= nx2 < self.width and 0 <= ny2 < self.height:
+                    if self.clearance[nx2, ny2] > d + 1:
+                        self.clearance[nx2, ny2] = d + 1
+                        bfs_queue.append((nx2, ny2))
+        print("Clearance field ready.")
+
     def world_to_grid(self, x, y):
         gx = int((x - self.min_x) / self.res)
         gy = int((y - self.min_y) / self.res)
@@ -532,9 +555,22 @@ class GridMap:
             return True
         return self.grid[gx, gy]
 
+    def clearance_at(self, gx, gy) -> float:
+        """Return clearance distance in metres for a free cell, 0 if blocked."""
+        if not (0 <= gx < self.width and 0 <= gy < self.height):
+            return 0.0
+        return float(self.clearance[gx, gy]) * self.res
+
 
 def heuristic(a, b):
     return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
+
+# Maximum clearance penalty contribution added to each A* step.
+# A cell with 0 m of clearance (wall boundary) adds this full cost;
+# cells further from walls add progressively less.
+_CLEARANCE_PENALTY_MAX = 1.8    # metres of extra cost per grid step
+_CLEARANCE_PENALTY_RAMP = 4.0   # clearance at which penalty reaches ~0
 
 
 def astar(grid_map, start, goal):
@@ -582,7 +618,14 @@ def astar(grid_map, start, goal):
             if grid_map.is_blocked(*neighbor):
                 continue
 
-            tentative_g = g_score[current] + math.sqrt(dx * dx + dy * dy)
+            step_dist = math.sqrt(dx * dx + dy * dy)
+            # Clearance-weighted cost: penalise cells close to obstacles so A*
+            # naturally prefers open corridors over wall-hugging paths.
+            nbr_clearance = grid_map.clearance_at(*neighbor)
+            clearance_penalty = _CLEARANCE_PENALTY_MAX * max(
+                0.0, 1.0 - nbr_clearance / _CLEARANCE_PENALTY_RAMP
+            )
+            tentative_g = g_score[current] + step_dist + clearance_penalty
 
             if neighbor not in g_score or tentative_g < g_score[neighbor]:
                 came_from[neighbor] = current
@@ -591,6 +634,55 @@ def astar(grid_map, start, goal):
                 heapq.heappush(open_set, (f, neighbor))
 
     return []
+
+
+def smooth_path(path, grid_map):
+    """String-pulling: remove waypoints where direct line-of-sight is clear.
+
+    Walks the raw A* waypoint list and skips any intermediate point that is
+    visible (unobstructed straight line in the grid) from the current anchor.
+    This converts the jagged staircase output of grid A* into a sequence of
+    long, smooth straight segments, lowering the chance of the drone clipping
+    obstacle corners during turns.
+    """
+    if len(path) <= 2:
+        return path
+
+    def los_clear(a, b):
+        """Bresenham line check between two world-coordinate waypoints."""
+        ax, ay = grid_map.world_to_grid(a[0], a[1])
+        bx, by = grid_map.world_to_grid(b[0], b[1])
+        dx = abs(bx - ax)
+        dy = abs(by - ay)
+        sx = 1 if ax < bx else -1
+        sy = 1 if ay < by else -1
+        err = dx - dy
+        x, y = ax, ay
+        while True:
+            if grid_map.is_blocked(x, y):
+                return False
+            if x == bx and y == by:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x += sx
+            if e2 < dx:
+                err += dx
+                y += sy
+        return True
+
+    smoothed = [path[0]]
+    anchor = 0
+    i = 2
+    while i < len(path):
+        if not los_clear(path[anchor], path[i]):
+            # Break of sight: keep the last visible waypoint.
+            smoothed.append(path[i - 1])
+            anchor = i - 1
+        i += 1
+    smoothed.append(path[-1])
+    return smoothed
 
 
 # --- DRONE STATE ---
@@ -1257,6 +1349,11 @@ async def collect_data(args):
     front_min_filtered = 20.0
     front_blocked_since = None
     threat_trigger_since = None
+    # Oscillation/thrashing detector: track recent heading commands to detect
+    # rapid direction reversals caused by two obstacles trapping the drone.
+    _recent_nav_dirs: deque = deque(maxlen=20)   # (nav_ux, nav_uy) per tick
+    _osc_escape_until = 0.0                       # time.time() deadline
+    _osc_escape_dir = (0.0, 0.0)                  # lateral escape unit vector
     goal_set_at = time.time()
     last_replan_at = 0.0
     unstable_since = None
@@ -1440,7 +1537,9 @@ async def collect_data(args):
                         goal_set_at = time.time()
                         continue
 
-                    # Downsample less aggressively for smoother guidance.
+                    # String-pull first to remove unnecessary zig-zag waypoints,
+                    # then downsample the already-smooth result.
+                    path = smooth_path(path, grid)
                     stride = 2 if args.precision_mode else 3
                     current_path = path[::stride] + [path[-1]]
                     path_index = 0
@@ -1584,6 +1683,7 @@ async def collect_data(args):
                     print(f"High obstacle threat ({geom_threat:.2f}) → proactive replan")
                     path = astar(grid, (px, py), (goal_x, goal_y))
                     if path:
+                        path = smooth_path(path, grid)
                         stride = 2 if args.precision_mode else 3
                         current_path = path[::stride] + [path[-1]]
                         path_index = 0
@@ -1757,6 +1857,60 @@ async def collect_data(args):
             if recovery_mode:
                 desired_speed = min(desired_speed, float(args.recovery_speed_mps))
                 yaw_target = map_yaw_deg
+
+            # ── 360° side-threat check during large heading changes ──────────
+            # When the drone is rotating to align with a new direction, its
+            # current forward corridor points somewhere different from its
+            # ground-track direction.  Run a full 360° obstacle scan to
+            # detect walls that the drone is about to fly into as it completes
+            # the turn, and slow down accordingly.
+            if yaw_err_abs >= float(args.heading_align_slow_deg) and desired_speed > 0.0:
+                _, _, side_clearance, _ = world_map.obstacle_avoidance_field(
+                    px, py, dstate.rel_alt,
+                    math.degrees(math.atan2(nav_uy, nav_ux)),  # scan ahead along intended route
+                    route_ux=nav_ux, route_uy=nav_uy,
+                    lookahead_m=float(args.obstacle_lookahead_m),
+                    corridor_deg=180.0,                        # full circle
+                    safety_margin_m=float(args.obstacle_safety_margin_m),
+                    vertical_clearance_m=float(args.obstacle_height_clearance_m),
+                )
+                if side_clearance < slow_down_dist:
+                    side_slow = clamp(
+                        (side_clearance - hard_stop_dist) / max(1e-6, slow_down_dist - hard_stop_dist),
+                        0.0, 1.0,
+                    )
+                    desired_speed *= side_slow
+
+            # ── Oscillation / thrashing detector ─────────────────────────────
+            # Detect when the nav direction reverses rapidly (e.g. drone is
+            # trapped between two obstacles and keeps bouncing).  If the dot
+            # product of the current nav direction and the average direction of
+            # the last N samples is strongly negative, we are oscillating.
+            if not recovery_mode and not bridge_idle_hold:
+                _recent_nav_dirs.append((nav_ux, nav_uy))
+            if now > _osc_escape_until and len(_recent_nav_dirs) >= 10:
+                avg_ux = sum(d[0] for d in _recent_nav_dirs) / len(_recent_nav_dirs)
+                avg_uy = sum(d[1] for d in _recent_nav_dirs) / len(_recent_nav_dirs)
+                dot = nav_ux * avg_ux + nav_uy * avg_uy
+                avg_len = math.hypot(avg_ux, avg_uy)
+                # Oscillating: current direction opposes recent average AND the
+                # average direction itself has low magnitude (alternating).
+                if dot < -0.5 and avg_len < 0.4 and geom_threat > 0.3:
+                    # Pick escape direction perpendicular to the current heading,
+                    # choosing the side with the most open LIDAR reading.
+                    perp1 = (-math.sin(math.radians(map_yaw_deg)), math.cos(math.radians(map_yaw_deg)))
+                    perp2 = (math.sin(math.radians(map_yaw_deg)), -math.cos(math.radians(map_yaw_deg)))
+                    idx1 = int(round(num_rays * (math.degrees(math.atan2(perp1[1], perp1[0])) % 360.0) / 360.0)) % num_rays
+                    idx2 = int(round(num_rays * (math.degrees(math.atan2(perp2[1], perp2[0])) % 360.0) / 360.0)) % num_rays
+                    _osc_escape_dir = perp1 if sim_lidar[idx1] >= sim_lidar[idx2] else perp2
+                    _osc_escape_until = now + 1.5
+                    _recent_nav_dirs.clear()
+                    log(f"Oscillation detected — lateral escape for 1.5 s (threat={geom_threat:.2f})")
+
+            if now < _osc_escape_until:
+                # Override nav direction with lateral escape vector.
+                nav_ux, nav_uy = _osc_escape_dir
+                desired_speed = min(desired_speed, float(args.base_speed) * 1.2)
 
             vx_des = nav_ux * desired_speed
             vy_des = nav_uy * desired_speed
