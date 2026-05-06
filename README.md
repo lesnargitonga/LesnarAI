@@ -2,6 +2,20 @@
 
 Operation Sentinel is the LesnarAI command-and-control stack for autonomous UAV simulation, data collection, and student-model training. It integrates PX4 SITL, Gazebo Harmonic, a Gunicorn-served Flask/Socket.IO backend, a React operator frontend, and a MAVSDK-based teacher bridge that drives the drone and collects flight telemetry.
 
+## Showcase Focus
+
+- Systems integration across robotics simulation, web operations, telemetry, and training.
+- Truth-first fleet control: the UI only reflects real simulation and telemetry state.
+- Reproducible, auditable runtime artifacts for each launch and mission run.
+
+## At a Glance
+
+- Operator dashboard for real-time UAV command and fleet visibility.
+- PX4 SITL and Gazebo Harmonic simulation orchestration.
+- MAVSDK teacher bridge for flight control and telemetry capture.
+- Redis and TimescaleDB-backed messaging and telemetry pipelines.
+- Training-data collection for downstream student-policy learning.
+
 ## System Overview
 
 | Component | Technology | Port |
