@@ -754,6 +754,39 @@ def smooth_path(path, grid_map):
     return smoothed
 
 
+def _decimate_path_by_angle(path, min_spacing_m=4.0, turn_deg=15.0):
+    """Keep cornering waypoints while dropping redundant straight-line points."""
+    if len(path) <= 2:
+        return path
+
+    decimated = [path[0]]
+    last_keep = path[0]
+    turn_threshold = math.radians(turn_deg)
+
+    for idx in range(1, len(path) - 1):
+        current = path[idx]
+        nxt = path[idx + 1]
+
+        in_dx = current[0] - last_keep[0]
+        in_dy = current[1] - last_keep[1]
+        out_dx = nxt[0] - current[0]
+        out_dy = nxt[1] - current[1]
+        in_len = math.hypot(in_dx, in_dy)
+        out_len = math.hypot(out_dx, out_dy)
+        if in_len < 1e-6 or out_len < 1e-6:
+            continue
+
+        dot = max(-1.0, min(1.0, ((in_dx * out_dx) + (in_dy * out_dy)) / (in_len * out_len)))
+        turn = math.acos(dot)
+        if in_len >= min_spacing_m and turn >= turn_threshold:
+            decimated.append(current)
+            last_keep = current
+
+    if math.hypot(decimated[-1][0] - path[-1][0], decimated[-1][1] - path[-1][1]) > 1e-6:
+        decimated.append(path[-1])
+    return decimated
+
+
 # --- DRONE STATE ---
 class DroneState:
     def __init__(self):
@@ -1611,6 +1644,40 @@ async def collect_data(args):
         current_path = []
         path_index = 0
 
+    def downsample_planned_path(path):
+        min_spacing_m = 2.5 if args.precision_mode else 4.0
+        turn_deg = 12.0 if args.precision_mode else 15.0
+        return _decimate_path_by_angle(path, min_spacing_m=min_spacing_m, turn_deg=turn_deg)
+
+    def replan_current_objective(reason: str, *, retarget_autonomous: bool = False):
+        nonlocal goal_x, goal_y, goal_set_at, current_path, path_index
+        nonlocal last_replan_at, low_progress_strikes, heading_stall_strikes
+
+        if args.bridge_only:
+            if (
+                external_mission
+                and external_mission.get("status") == "ACTIVE"
+                and external_mission.get("await_takeoff_alt") is None
+            ):
+                wp = external_mission["waypoints"][external_mission["current_idx"]]
+                set_goal_from_global(float(wp[0]), float(wp[1]))
+            else:
+                goal_set_at = time.time()
+                current_path = []
+                path_index = 0
+        else:
+            if retarget_autonomous:
+                goal_x, goal_y = pick_new_goal()
+            goal_set_at = time.time()
+            current_path = []
+            path_index = 0
+
+        last_replan_at = time.time()
+        low_progress_strikes = 0
+        heading_stall_strikes = 0
+        if reason:
+            log(reason)
+
     def stop_external_mission(log_message: str | None = None):
         nonlocal external_mission, current_path, path_index, goal_x, goal_y, goal_set_at
         external_mission = None
@@ -1621,6 +1688,16 @@ async def collect_data(args):
         path_index = 0
         if log_message:
             log(log_message)
+
+    def bridge_idle_mode_active(px_now: float, py_now: float) -> bool:
+        return (
+            args.bridge_only
+            and not offboard_active
+            and takeoff_target_alt is None
+            and not (external_mission and external_mission.get("status") == "ACTIVE")
+            and abs(goal_x - px_now) < 0.5
+            and abs(goal_y - py_now) < 0.5
+        )
 
     if args.bridge_only:
         goal_x, goal_y = get_local_pos()
@@ -1691,8 +1768,22 @@ async def collect_data(args):
                     external_mission["await_takeoff_alt"] = None
                     log(f"--> External mission navigation engaged for waypoint {external_mission['current_idx'] + 1}")
 
+            takeoff_nav_hold = (
+                takeoff_target_alt is not None
+                or (
+                    args.bridge_only
+                    and external_mission
+                    and external_mission.get("status") == "ACTIVE"
+                    and external_mission.get("await_takeoff_alt") is not None
+                )
+            )
+
             # If not making meaningful progress, consider replanning using guarded strike logic.
-            if (not args.bridge_only) and now - last_progress_check > float(args.progress_window_sec):
+            if (
+                (not args.bridge_only)
+                and not takeoff_nav_hold
+                and now - last_progress_check > float(args.progress_window_sec)
+            ):
                 moved = math.sqrt((px - progress_anchor[0]) ** 2 + (py - progress_anchor[1]) ** 2)
                 in_goal_grace = (now - goal_set_at) < float(args.goal_grace_sec)
                 turning_in_place = last_heading_err_abs > float(args.replan_heading_hold_deg)
@@ -1718,34 +1809,40 @@ async def collect_data(args):
 
                 if low_progress_strikes >= int(args.replan_strikes):
                     if (now - last_replan_at) >= float(args.replan_cooldown_sec):
-                        print("Low progress persisted -> replanning with a new goal")
-                        goal_x, goal_y = pick_new_goal()
-                        goal_set_at = time.time()
-                        last_replan_at = now
-                        current_path = []
-                        low_progress_strikes = 0
+                        replan_current_objective(
+                            "Low progress persisted -> replanning current objective"
+                        )
                 progress_anchor = (px, py)
                 last_progress_check = now
 
             if not current_path or path_index >= len(current_path):
-                if args.bridge_only and takeoff_target_alt is None and not (external_mission and external_mission.get("status") == "ACTIVE"):
+                if bridge_idle_mode_active(px, py):
                     goal_x, goal_y = px, py
                     current_path = [(px, py)]
                     path_index = 0
                 else:
                     print(f"Planning A* to {goal_x:.0f},{goal_y:.0f}...")
-                    path = astar(grid, (px, py), (goal_x, goal_y))
+                    _is_replanning = True
+                    try:
+                        path = astar(grid, (px, py), (goal_x, goal_y))
+                    finally:
+                        _is_replanning = False
                     if not path:
-                        print("Path failed! Picking new goal.")
-                        goal_x, goal_y = pick_new_goal()
-                        goal_set_at = time.time()
+                        if args.bridge_only:
+                            replan_current_objective(
+                                "Path to current bridge objective failed; retrying same target"
+                            )
+                        else:
+                            replan_current_objective(
+                                "Path failed -> retargeting autonomous goal",
+                                retarget_autonomous=True,
+                            )
                         continue
 
                     # String-pull first to remove unnecessary zig-zag waypoints,
                     # then downsample the already-smooth result.
                     path = smooth_path(path, grid)
-                    stride = 2 if args.precision_mode else 3
-                    current_path = path[::stride] + [path[-1]]
+                    current_path = downsample_planned_path(path)
                     path_index = 0
 
                     # Validate that no waypoint in the downsampled path grazes
@@ -1760,11 +1857,9 @@ async def collect_data(args):
                         if not path_clear:
                             break
                     if not path_clear:
-                        print("Path grazes obstacle — replanning to safer goal.")
-                        goal_x, goal_y = pick_new_goal()
-                        goal_set_at = time.time()
-                        last_replan_at = now
-                        current_path = []
+                        replan_current_objective(
+                            "Path grazes obstacle -> replanning current objective"
+                        )
                         continue
 
                     print(f"Path found! {len(current_path)} waypoints")
@@ -1897,23 +1992,28 @@ async def collect_data(args):
                 if threat_trigger_since is None:
                     threat_trigger_since = now
                 elif (
+                    not takeoff_nav_hold
+                    and
                     (now - threat_trigger_since) >= 0.4
                     and (now - last_replan_at) >= float(args.replan_cooldown_sec)
                     and not (args.bridge_only and external_mission and external_mission.get("status") == "ACTIVE")
                 ):
                     print(f"High obstacle threat ({geom_threat:.2f}) → proactive replan")
-                    path = astar(grid, (px, py), (goal_x, goal_y))
+                    _is_replanning = True
+                    try:
+                        path = astar(grid, (px, py), (goal_x, goal_y))
+                    finally:
+                        _is_replanning = False
                     if path:
                         path = smooth_path(path, grid)
-                        stride = 2 if args.precision_mode else 3
-                        current_path = path[::stride] + [path[-1]]
+                        current_path = downsample_planned_path(path)
                         path_index = 0
                     else:
-                        # A* failed to current goal — pick a new one
-                        goal_x, goal_y = pick_new_goal()
-                        goal_set_at = time.time()
-                        current_path = []
-                    last_replan_at = now
+                        replan_current_objective(
+                            "High obstacle threat with no safe path -> replanning current objective"
+                        )
+                    if path:
+                        last_replan_at = now
                     threat_trigger_since = None
             else:
                 threat_trigger_since = None
@@ -2071,20 +2171,16 @@ async def collect_data(args):
                 collect_data._stuck_hover_ticks = 0
             speed_now = math.hypot(dstate.vx, dstate.vy)
             near_obstacle = geom_clearance_m < (slow_down_dist + 1.0) or front_eval_dist < slow_down_dist
-            if speed_now < 0.4 and near_obstacle:
+            if (not takeoff_nav_hold) and speed_now < 0.4 and near_obstacle:
                 if collect_data._stuck_hover_since is None:
                     collect_data._stuck_hover_since = now
                 collect_data._stuck_hover_ticks += 1
                 stuck_elapsed = now - collect_data._stuck_hover_since
                 if stuck_elapsed > 2.0 and (now - last_replan_at) >= float(args.replan_cooldown_sec):
-                    log(f"Stuck-hover escape -> force replan ({stuck_elapsed:.1f}s stuck, "
-                        f"speed={speed_now:.2f}, front={front_eval_dist:.2f}, geom={geom_clearance_m:.2f})")
-                    goal_x, goal_y = pick_new_goal()
-                    goal_set_at = time.time()
-                    last_replan_at = now
-                    current_path = []
-                    heading_stall_strikes = 0
-                    low_progress_strikes = 0
+                    replan_current_objective(
+                        f"Stuck-hover escape -> replan current objective ({stuck_elapsed:.1f}s stuck, "
+                        f"speed={speed_now:.2f}, front={front_eval_dist:.2f}, geom={geom_clearance_m:.2f})"
+                    )
                     collect_data._stuck_hover_since = None
                     collect_data._stuck_hover_ticks = 0
                     continue
@@ -2101,7 +2197,6 @@ async def collect_data(args):
                 abs(sideslip_now_deg) > float(args.max_sideslip_guard_deg)
                 and speed_planar_now >= float(args.sideslip_speed_guard_mps)
             )
-
             if attitude_unstable or sideslip_unstable:
                 if unstable_since is None:
                     unstable_since = now
@@ -2263,6 +2358,8 @@ async def collect_data(args):
 
             # Deadlock escape: large persistent heading error + no progress means route/avoidance lock.
             heading_stall_eligible = (
+                not takeoff_nav_hold
+                and
                 (now - goal_set_at) >= float(args.heading_stall_grace_sec)
                 and (now - last_replan_at) >= float(args.replan_cooldown_sec)
             )
@@ -2278,17 +2375,11 @@ async def collect_data(args):
                 heading_stall_strikes = 0
 
             if heading_stall_strikes >= int(args.heading_stall_strikes):
-                log(
-                    "Heading-stall detected -> force replan "
+                replan_current_objective(
+                    "Heading-stall detected -> replan current objective "
                     f"(head_err={heading_error_deg:.1f}deg, progress={progress_mps:.2f}mps, "
                     f"front={front_eval_dist:.2f}m, geom={geom_clearance_m:.2f}m)"
                 )
-                goal_x, goal_y = pick_new_goal()
-                goal_set_at = time.time()
-                last_replan_at = now
-                current_path = []
-                heading_stall_strikes = 0
-                low_progress_strikes = 0
                 continue
 
             if args.precision_mode and (time.time() - metrics_log_at) >= max(0.5, float(args.metrics_log_sec)):

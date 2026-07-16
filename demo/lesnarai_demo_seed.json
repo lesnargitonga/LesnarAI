@@ -1,0 +1,8 @@
+{
+  "_comment": "DEMO-SAFE seed for LESNAR AI. No real drones, no PX4/Gazebo, no flight. Registers SIMULATED drones via the real backend API so the dashboard, telemetry, and audit reflect a real state change. Coordinates are public Nairobi-area points for visual context only.",
+  "simulated_drones": [
+    { "drone_id": "DEMO-SIM-01", "position": [-1.2921, 36.8219, 0] },
+    { "drone_id": "DEMO-SIM-02", "position": [-1.3000, 36.8000, 0] }
+  ],
+  "notes": "Run scripts/run_lesnarai_demo_safe.sh to seed. This exercises POST /api/drones -> fleet + DB + audit, visible in GET /api/drones, GET /api/telemetry, and the operator dashboard map."
+}
