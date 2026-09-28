@@ -10,7 +10,6 @@ Examples:
 
 import argparse
 import hashlib
-import hmac
 import json
 import secrets
 import sys

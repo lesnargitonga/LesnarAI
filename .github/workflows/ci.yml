@@ -53,13 +53,26 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install backend dependencies
+        # The pinned requirements, so the check imports what the container runs
+        # (the hand-written list here had drifted: no Flask-Limiter).
         run: |
-          pip install flask flask-socketio flask-sqlalchemy flask-migrate \
-            redis psycopg2-binary gunicorn sqlalchemy alembic python-dotenv \
-            flask-cors gevent gevent-websocket
+          pip install -r backend/requirements.txt \
+            flask-migrate python-dotenv gevent gevent-websocket
+      - name: Generate throwaway secrets
+        # app.py refuses to start with missing or placeholder secrets while auth is on.
+        # Fresh random values per run; nothing is stored or reused.
+        run: |
+          for k in FLASK_SECRET_KEY LESNAR_ADMIN_API_KEY LESNAR_OPERATOR_API_KEY LESNAR_AUDIT_CHAIN_KEY; do
+            v=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+            echo "::add-mask::$v"
+            echo "$k=$v" >> "$GITHUB_ENV"
+          done
       - name: Check backend imports
-        run: python3 -c "import backend.app; print('backend.app OK')"
+        # Imported the way backend/Dockerfile runs it: PYTHONPATH=backend:drone_simulation,
+        # since app.py imports db and simulator as top-level modules.
+        run: python3 -c "import app; print('backend app OK')"
         env:
+          PYTHONPATH: backend:drone_simulation
           FLASK_ENV: testing
           LESNAR_EXTERNAL_ONLY: '1'
           DATABASE_URL: sqlite:///test.db

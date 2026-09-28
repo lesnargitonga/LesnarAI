@@ -44,6 +44,7 @@ MISSION_OFFBOARD_TRIES = 10     # 2 s apart; after this an external mission is a
 _LOCK_BASENAME = "lesnar_px4_teacher_collect_gz"
 _LOCK_HANDLE = None
 
+
 def log(msg: str) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     line = f"[{ts}] {msg}"
@@ -53,6 +54,7 @@ def log(msg: str) -> None:
             f.write(line + "\n")
     except Exception:
         pass
+
 
 log("Teacher script started")
 
@@ -247,6 +249,7 @@ def analyze_telemetry_csv(csv_path: str, report_path: str | None = None) -> dict
 
     return report
 
+
 """
 GOD-MODE TEACHER COLLECTOR
 --------------------------
@@ -257,8 +260,11 @@ GOD-MODE TEACHER COLLECTOR
 """
 
 # --- UTILS ---
+
+
 def wrap_deg(a: float) -> float:
     return (a + 180) % 360 - 180
+
 
 def shortest_diff(current: float, target: float) -> float:
     return wrap_deg(target - current)
@@ -286,6 +292,7 @@ def heading_to_map_yaw(heading_deg: float) -> float:
 
 def map_yaw_to_heading(yaw_deg: float) -> float:
     return wrap_deg(90.0 - yaw_deg)
+
 
 class Obstacle:
     def __init__(self, x, y, radius, height, is_box=False, dx=0, dy=0, yaw=0.0):
@@ -381,7 +388,7 @@ class Map:
                 if pose_elem is None:
                     continue
                 parts = [float(f) for f in pose_elem.text.split()]
-                mx, my, mz = parts[0], parts[1], parts[2]
+                mx, my = parts[0], parts[1]
 
                 link = model.find("link")
                 if link is None:
@@ -636,8 +643,8 @@ class GridMap:
         return len(dirty)
 
     def detect_dynamic_obstacles(self, px: float, py: float, yaw_deg: float,
-                                  sim_lidar: np.ndarray, expected_lidar: np.ndarray,
-                                  threshold_m: float = 2.0, min_range_m: float = 1.0) -> int:
+                                 sim_lidar: np.ndarray, expected_lidar: np.ndarray,
+                                 threshold_m: float = 2.0, min_range_m: float = 1.0) -> int:
         """Compare actual LIDAR readings against expected (SDF-based) readings.
 
         Where actual < expected - threshold, the discrepancy implies an obstacle
@@ -842,25 +849,25 @@ class DroneState:
         self.mode = "UNKNOWN"
 
         # ── Battery (MAVSDK only unless synthetic models are explicitly enabled) ──
-        self.battery_voltage_v      = None   # volts
-        self.battery_remaining_pct  = None   # 0–100
-        self.battery_current_a      = None   # amps
+        self.battery_voltage_v = None   # volts
+        self.battery_remaining_pct = None   # 0–100
+        self.battery_current_a = None   # amps
 
         # ── Angular rates (from MAVSDK IMU, deg/s) ──────────────────────────
-        self.roll_rate_dps  = 0.0
+        self.roll_rate_dps = 0.0
         self.pitch_rate_dps = 0.0
-        self.yaw_rate_dps   = 0.0
+        self.yaw_rate_dps = 0.0
 
         # ── IMU linear acceleration (body FRD frame, m/s²) ──────────────────
-        self.accel_x_ms2    = 0.0    # forward
-        self.accel_y_ms2    = 0.0    # right
-        self.accel_z_ms2    = 9.81   # down (gravity at rest)
+        self.accel_x_ms2 = 0.0    # forward
+        self.accel_y_ms2 = 0.0    # right
+        self.accel_z_ms2 = 9.81   # down (gravity at rest)
         self.imu_temp_deg_c = 25.0
 
         # ── GPS quality ─────────────────────────────────────────────────────
-        self.gps_fix_type   = 0      # 0=none, 3=3D, 6=RTK-fixed
-        self.gps_num_sats   = 0
-        self.gps_hdop       = 99.9
+        self.gps_fix_type = 0      # 0=none, 3=3D, 6=RTK-fixed
+        self.gps_num_sats = 0
+        self.gps_hdop = 99.9
         self.altitude_msl_m = 0.0
 
 
@@ -887,20 +894,20 @@ class BatteryModel:
     Model: discharge curve · internal-resistance voltage sag · current integration
     """
     CAPACITY_AH = 5.0
-    CELLS       = 4
-    V_FULL      = 4.20 * 4      # 16.8 V
-    V_NOMINAL   = 3.70 * 4      # 14.8 V
-    V_CUTOFF    = 3.30 * 4      # 13.2 V  (hard cutoff)
-    R_INT       = 0.022         # Ω  internal resistance (4S pack)
-    MASS_KG     = 1.5           # X500 AUW
-    G           = 9.81
-    P_HOVER     = 108.0         # W  empirical hover power X500-class
-    K_AERO      = 0.55          # W·s²/m²  aerodynamic drag: P_drag = K_AERO*v²
-    P_AVIONICS  = 8.0           # W  constant electronics draw
-    ETA_CLIMB   = 0.72          # motor+prop efficiency for climb
+    CELLS = 4
+    V_FULL = 4.20 * 4      # 16.8 V
+    V_NOMINAL = 3.70 * 4      # 14.8 V
+    V_CUTOFF = 3.30 * 4      # 13.2 V  (hard cutoff)
+    R_INT = 0.022         # Ω  internal resistance (4S pack)
+    MASS_KG = 1.5           # X500 AUW
+    G = 9.81
+    P_HOVER = 108.0         # W  empirical hover power X500-class
+    K_AERO = 0.55          # W·s²/m²  aerodynamic drag: P_drag = K_AERO*v²
+    P_AVIONICS = 8.0           # W  constant electronics draw
+    ETA_CLIMB = 0.72          # motor+prop efficiency for climb
 
     def __init__(self):
-        self.soc              = 1.0   # state of charge [0, 1]
+        self.soc = 1.0   # state of charge [0, 1]
         self.energy_consumed_wh = 0.0
 
     @property
@@ -915,9 +922,9 @@ class BatteryModel:
 
     def power_draw(self, vx: float, vy: float, vz: float) -> float:
         """Estimate instantaneous power (W) from NED velocity."""
-        v_h    = math.sqrt(vx**2 + vy**2)
-        climb  = max(0.0, -vz)                               # NED: up = negative vz
-        p_aero  = self.K_AERO * v_h**2
+        v_h = math.sqrt(vx**2 + vy**2)
+        climb = max(0.0, -vz)                               # NED: up = negative vz
+        p_aero = self.K_AERO * v_h**2
         p_climb = self.MASS_KG * self.G * climb / self.ETA_CLIMB
         return self.P_HOVER + p_aero + p_climb + self.P_AVIONICS
 
@@ -925,9 +932,9 @@ class BatteryModel:
         """Advance one time step. Returns (current_a, power_w)."""
         if dt_s <= 0:
             return 0.0, 0.0
-        p   = self.power_draw(vx, vy, vz)
-        v   = max(self.voltage, 12.0)
-        i   = p / v
+        p = self.power_draw(vx, vy, vz)
+        v = max(self.voltage, 12.0)
+        i = p / v
         dah = i * dt_s / 3600.0
         self.soc = max(0.0, self.soc - dah / self.CAPACITY_AH)
         self.energy_consumed_wh += p * dt_s / 3600.0
@@ -1052,7 +1059,7 @@ class StudentController:
             feat = lidar + [math.sin(yaw_rad), math.cos(yaw_rad)] + scalars
         else:
             feat = lidar + [state_dict.get("rel_alt", 0.0),
-                           math.sin(yaw_rad), math.cos(yaw_rad)]
+                            math.sin(yaw_rad), math.cos(yaw_rad)]
         x = torch.tensor([feat], dtype=torch.float32, device=self.device)
         out = self.net(x)[0].cpu().tolist()
         return tuple(out)  # (cmd_vx, cmd_vy, cmd_vz, cmd_yaw)
@@ -1066,22 +1073,22 @@ class WindModel:
     """
     THETA = 0.04   # mean-reversion rate  (s⁻¹)
     SIGMA = 0.18   # volatility per √s    (m/s/√s)
-    MU_N  = 0.0    # long-term mean north  (m/s)
-    MU_E  = 0.0    # long-term mean east   (m/s)
+    MU_N = 0.0    # long-term mean north  (m/s)
+    MU_E = 0.0    # long-term mean east   (m/s)
 
     def __init__(self, seed: int | None = None):
         rng = random.Random(seed)
         self.north = rng.gauss(1.5, 1.2)
-        self.east  = rng.gauss(0.5, 1.2)
-        self.up    = 0.0
-        self._rng  = rng
+        self.east = rng.gauss(0.5, 1.2)
+        self.up = 0.0
+        self._rng = rng
 
     def step(self, dt_s: float) -> None:
         sq = math.sqrt(max(dt_s, 0.0))
         self.north += self.THETA * (self.MU_N - self.north) * dt_s + self.SIGMA * sq * self._rng.gauss(0, 1)
-        self.east  += self.THETA * (self.MU_E - self.east)  * dt_s + self.SIGMA * sq * self._rng.gauss(0, 1)
+        self.east += self.THETA * (self.MU_E - self.east) * dt_s + self.SIGMA * sq * self._rng.gauss(0, 1)
         self.north = max(-14.0, min(14.0, self.north))
-        self.east  = max(-14.0, min(14.0, self.east))
+        self.east = max(-14.0, min(14.0, self.east))
 
     @property
     def speed(self) -> float:
@@ -1117,9 +1124,9 @@ async def imu_listener(drone, state):
         async for imu in drone.telemetry.imu():
             av = imu.angular_velocity_frd
             if av is not None:
-                state.roll_rate_dps  = math.degrees(float(av.forward_rad_s))
+                state.roll_rate_dps = math.degrees(float(av.forward_rad_s))
                 state.pitch_rate_dps = math.degrees(float(av.right_rad_s))
-                state.yaw_rate_dps   = math.degrees(float(av.down_rad_s))
+                state.yaw_rate_dps = math.degrees(float(av.down_rad_s))
             accel = imu.acceleration_frd
             if accel is not None:
                 state.accel_x_ms2 = float(accel.forward_m_s2)
@@ -1304,7 +1311,7 @@ async def collect_data(args):
     # --- Redis Setup (Bridge) ---
     redis_client = None
     redis_pubsub = None
-    
+
     if redis:
         try:
             redis_client = redis.Redis(host=args.redis_host, port=args.redis_port, db=0)
@@ -1592,11 +1599,11 @@ async def collect_data(args):
 
     wind_model = None if disable_wind_model else WindModel()
     battery_model = BatteryModel() if enable_battery_model else None
-    total_distance_m   = 0.0
+    total_distance_m = 0.0
     last_logged_px, last_logged_py = 0.0, 0.0
-    airborne_since  = None   # set once the drone first lifts off
-    _is_replanning  = False
-    _is_recovering  = False
+    airborne_since = None   # set once the drone first lifts off
+    _is_replanning = False
+    _is_recovering = False
 
     # Command smoothing / limits (stability)
     prev_vx_cmd = 0.0
@@ -2508,16 +2515,16 @@ async def collect_data(args):
                 )
 
             # ── Derived quantities for the enriched row ──────────────────────────────
-            _gs    = math.sqrt(dstate.vx**2 + dstate.vy**2)
-            _cog   = (math.degrees(math.atan2(dstate.vy, dstate.vx)) + 360) % 360
-            _d2g   = math.sqrt((px - goal_x)**2 + (py - goal_y)**2)
+            _gs = math.sqrt(dstate.vx**2 + dstate.vy**2)
+            _cog = (math.degrees(math.atan2(dstate.vy, dstate.vx)) + 360) % 360
+            _d2g = math.sqrt((px - goal_x)**2 + (py - goal_y)**2)
             _mission_elapsed = (time.time() - airborne_since) if airborne_since else 0.0
             _alt_m = max(0.0, dstate.rel_alt)
-            _temp  = isa_temperature(_alt_m)
-            _rho   = isa_density(_alt_m)
+            _temp = isa_temperature(_alt_m)
+            _rho = isa_density(_alt_m)
             # effective airspeed = ground speed corrected by wind (simplified scalar)
             _wind_speed = wind_model.speed if wind_model is not None else 0.0
-            _eas   = max(0.0, _gs - _wind_speed * 0.5)
+            _eas = max(0.0, _gs - _wind_speed * 0.5)
             # obstacle count within slow_down_dist
             try:
                 _obs_near = int(np.sum(sim_lidar < slow_down_dist))
@@ -2643,7 +2650,7 @@ async def collect_data(args):
                     await redis_client.publish('telemetry', json.dumps(telemetry_data))
                 except Exception:
                     pass
-                
+
                 # 2. Check Commands  (drain all pending; break when queue is empty)
                 try:
                     while True:
@@ -2845,7 +2852,7 @@ async def collect_data(args):
 
                             elif action == 'mission_stop':
                                 stop_external_mission("--> External mission stopped")
-                                
+
                 except Exception as e:
                     log(f"!! Redis command loop warning: {e}")
 
@@ -3179,5 +3186,3 @@ if __name__ == "__main__":
         if not args.no_lock:
             acquire_single_instance_lock(args.drone_id)
         asyncio.run(collect_data(args))
-
-

@@ -193,6 +193,7 @@ def _maybe_append_audit_for_manifest(run_dir: Path, run_meta: dict[str, object],
     except Exception as exc:
         return {"error": str(exc)}
 
+
 _MODEL_CACHE_LOCK = threading.Lock()
 _MODEL_CACHE: dict[str, object] = {
     "checked_at": 0.0,

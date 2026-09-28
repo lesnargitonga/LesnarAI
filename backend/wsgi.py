@@ -1,7 +1,7 @@
 import atexit
 import threading
 
-from app import (
+from app import (  # noqa: F401  (gunicorn serves wsgi:app)
     app,
     fleet,
     initialize_demo_fleet,

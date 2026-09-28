@@ -19,7 +19,6 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import threading
 import time
-import socket
 import math
 from pathlib import Path
 import logging
@@ -94,6 +93,7 @@ def _parse_cors_origins() -> str | list[str]:
     origins = [origin.strip() for origin in raw.split(',') if origin.strip()]
     return origins or '*'
 
+
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = _env_str('FLASK_SECRET_KEY', 'dev-secret')
@@ -122,6 +122,8 @@ limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"]
                   storage_uri="memory://")
 
 # --- Security response headers ---
+
+
 @app.after_request
 def _add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -134,6 +136,7 @@ def _add_security_headers(response):
     if request.is_secure:
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     return response
+
 
 db.init_app(app)
 
@@ -239,8 +242,9 @@ _EXTERNAL_ONLY = _env_bool('LESNAR_EXTERNAL_ONLY', False)
 _FAILED_LOGINS: dict = {}  # key: "ip:username" → {'count': int, 'locked_until': float}
 _LOGIN_MAX_ATTEMPTS = _env_int('LESNAR_LOGIN_MAX_ATTEMPTS', 5)
 _LOGIN_LOCKOUT_S = _env_int('LESNAR_LOGIN_LOCKOUT_S', 300)   # 5-minute lockout
-_LOGIN_WINDOW_S  = _env_int('LESNAR_LOGIN_WINDOW_S', 60)
+_LOGIN_WINDOW_S = _env_int('LESNAR_LOGIN_WINDOW_S', 60)
 _failed_logins_lock = threading.Lock()
+
 
 def _brute_check(ip: str, username: str) -> tuple[bool, float]:
     """Return (is_locked, seconds_remaining)."""
@@ -253,6 +257,7 @@ def _brute_check(ip: str, username: str) -> tuple[bool, float]:
         if rec.get('locked_until', 0) > now:
             return True, round(rec['locked_until'] - now, 1)
         return False, 0.0
+
 
 def _brute_record_failure(ip: str, username: str) -> None:
     key = f"{ip}:{username}"
@@ -267,6 +272,7 @@ def _brute_record_failure(ip: str, username: str) -> None:
             rec['locked_until'] = now + _LOGIN_LOCKOUT_S
             logger.warning(f"SECURITY: Login lockout triggered for {key} after {rec['count']} attempts")
 
+
 def _brute_clear(ip: str, username: str) -> None:
     key = f"{ip}:{username}"
     with _failed_logins_lock:
@@ -274,8 +280,8 @@ def _brute_clear(ip: str, username: str) -> None:
 
 
 # --- Password hashing utility ---
-import os as _os
 import secrets as _secrets
+
 
 def _hash_password_pbkdf2(password: str, iterations: int = 390000) -> str:
     """Hash a password with pbkdf2_sha256. Returns a portable hash string."""
@@ -314,8 +320,6 @@ def _auth_role_counts() -> dict:
     for role, total in db.session.query(AuthUser.role, db.func.count(AuthUser.id)).group_by(AuthUser.role).all():
         counts[_normalize_role(role)] = int(total)
     return {role: total for role, total in counts.items() if total > 0}
-
-
 
 
 def _is_demo_drone_id(drone_id: str | None) -> bool:
@@ -499,6 +503,7 @@ def require_role(required: str):
     return decorator
 
 # API Routes
+
 
 def _safe_error(msg: str, e: Exception, status: int = 500):
     """Return a JSON error response without exposing internal exception details."""
@@ -807,6 +812,7 @@ def _persist_telemetry_history(states: list) -> None:
         db.session.bulk_save_objects(rows)
         db.session.commit()
 
+
 def _fetch_json(url, timeout_s=2.5):
     req = urllib.request.Request(
         url,
@@ -819,6 +825,7 @@ def _fetch_json(url, timeout_s=2.5):
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:
         data = resp.read().decode('utf-8')
     return json.loads(data)
+
 
 @app.route('/')
 def home():
@@ -1085,7 +1092,6 @@ def delete_user(target_username):
 def security_status():
     """Return a summary of the active security configuration (admin only)."""
     try:
-        import hashlib as _hl
         role_counts = _auth_role_counts()
 
         # Audit chain health — count recent events
@@ -1156,6 +1162,7 @@ def get_drones():
         logger.error(f"Error getting drones: {e}")
         return _safe_error('Failed to retrieve drones', e)
 
+
 @app.route('/api/drones/<drone_id>', methods=['GET'])
 @require_role('viewer')
 def get_drone(drone_id):
@@ -1182,6 +1189,7 @@ def get_drone(drone_id):
     except Exception as e:
         logger.error(f"Error getting drone {drone_id}: {e}")
         return _safe_error('Failed to retrieve drone', e)
+
 
 @app.route('/api/drones', methods=['POST'])
 @require_role('operator')
@@ -1230,6 +1238,7 @@ def create_drone():
     except Exception as e:
         return _safe_error('Failed to create drone', e)
 
+
 @app.route('/api/drones/<drone_id>', methods=['DELETE'])
 @require_role('operator')
 def delete_drone(drone_id):
@@ -1248,10 +1257,11 @@ def delete_drone(drone_id):
             return jsonify({'success': True, 'message': f'Drone {drone_id} removed'})
         else:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
-    
+
     except Exception as e:
         logger.error(f"Error deleting drone {drone_id}: {e}")
         return _safe_error('Failed to delete drone', e)
+
 
 @app.route('/api/drones/<drone_id>/arm', methods=['POST'])
 @require_role('operator')
@@ -1280,7 +1290,7 @@ def arm_drone(drone_id):
         drone = fleet.get_drone(drone_id)
         if not drone:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
-        
+
         success = drone.arm()
         _try_audit(drone_id, 'arm', None, bool(success), None if success else 'arm_failed')
         return jsonify({
@@ -1288,10 +1298,11 @@ def arm_drone(drone_id):
             'message': f'Drone {drone_id} {"armed" if success else "failed to arm"}',
             'state': _state_to_dict(drone.get_state())
         })
-    
+
     except Exception as e:
         logger.error(f"Error arming drone {drone_id}: {e}")
         return _safe_error('Failed to arm drone', e)
+
 
 @app.route('/api/drones/<drone_id>/disarm', methods=['POST'])
 @require_role('operator')
@@ -1320,7 +1331,7 @@ def disarm_drone(drone_id):
         drone = fleet.get_drone(drone_id)
         if not drone:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
-        
+
         success = drone.disarm()
         _try_audit(drone_id, 'disarm', None, bool(success), None if success else 'disarm_failed')
         return jsonify({
@@ -1328,7 +1339,7 @@ def disarm_drone(drone_id):
             'message': f'Drone {drone_id} {"disarmed" if success else "failed to disarm"}',
             'state': _state_to_dict(drone.get_state())
         })
-    
+
     except Exception as e:
         logger.error(f"Error disarming drone {drone_id}: {e}")
         return _safe_error('Failed to disarm drone', e)
@@ -1349,6 +1360,7 @@ def _publish_command(drone_id: str, action: str, params: dict | None = None) -> 
     except Exception as e:
         logger.warning(f"Failed to publish Redis command ({action} -> {drone_id}): {e}")
         return False
+
 
 @app.route('/api/drones/<drone_id>/takeoff', methods=['POST'])
 @require_role('operator')
@@ -1425,6 +1437,7 @@ def takeoff_drone(drone_id):
         logger.error(f"Error takeoff drone {drone_id}: {e}")
         return _safe_error('Failed to execute takeoff', e)
 
+
 @app.route('/api/drones/<drone_id>/land', methods=['POST'])
 @require_role('operator')
 def land_drone(drone_id):
@@ -1499,6 +1512,7 @@ def land_drone(drone_id):
     except Exception as e:
         logger.error(f"Error landing drone {drone_id}: {e}")
         return _safe_error('Failed to execute landing', e)
+
 
 @app.route('/api/drones/<drone_id>/goto', methods=['POST'])
 @require_role('operator')
@@ -1584,7 +1598,7 @@ def goto_drone(drone_id):
         drone = fleet.get_drone(drone_id)
         if not drone:
             return jsonify({'success': False, 'error': 'Drone not found'}), 404
-        
+
         success = drone.goto(latitude, longitude, altitude)
         _try_audit(drone_id, 'goto', {'latitude': latitude, 'longitude': longitude, 'altitude': altitude}, bool(success), None if success else 'goto_failed')
         return jsonify({
@@ -1593,10 +1607,11 @@ def goto_drone(drone_id):
             'target': {'latitude': latitude, 'longitude': longitude, 'altitude': altitude},
             'state': _state_to_dict(drone.get_state())
         })
-    
+
     except Exception as e:
         logger.error(f"Error navigating drone {drone_id}: {e}")
         return _safe_error('Failed to navigate drone', e)
+
 
 @app.route('/api/drones/<drone_id>/mission', methods=['POST'])
 @require_role('operator')
@@ -1711,7 +1726,7 @@ def execute_mission(drone_id):
             'mission_run_id': run_id,
             'state': _state_to_dict(drone.get_state())
         })
-    
+
     except Exception as e:
         logger.error(f"Error executing mission for drone {drone_id}: {e}")
         return _safe_error('Failed to execute mission', e)
@@ -1937,6 +1952,7 @@ def stop_mission(drone_id):
         logger.error(f"Error stopping mission for drone {drone_id}: {e}")
         return _safe_error('Failed to stop mission', e)
 
+
 @app.route('/api/drones/<drone_id>/command', methods=['POST'])
 @require_role('operator')
 def send_drone_command(drone_id):
@@ -1964,6 +1980,7 @@ def send_drone_command(drone_id):
         logger.error(f"Error sending command to drone {drone_id}: {e}")
         return _safe_error('Failed to send command', e)
 
+
 @app.route('/api/emergency', methods=['POST'])
 @require_role('admin')
 @limiter.limit("5 per minute")
@@ -1983,6 +2000,7 @@ def emergency_land_all():
         logger.error(f"Error during emergency landing: {e}")
         return _safe_error('Emergency landing failed', e)
 
+
 @app.route('/api/telemetry', methods=['GET'])
 @require_role('viewer')
 def get_telemetry():
@@ -1995,7 +2013,7 @@ def get_telemetry():
             'timestamp': datetime.now().isoformat(),
             'fleet_status': _fleet_status_payload(states)
         })
-    
+
     except Exception as e:
         logger.error(f"Error getting telemetry: {e}")
         return _safe_error('Failed to retrieve telemetry', e)
@@ -2064,6 +2082,7 @@ def get_drone_history(drone_id):
     except Exception as e:
         return _safe_error('Failed to retrieve drone history', e)
 
+
 @app.route('/api/obstacles', methods=['GET'])
 @require_role('viewer')
 def get_obstacles():
@@ -2076,6 +2095,7 @@ def get_obstacles():
     except Exception as e:
         logger.error(f"Error loading obstacles: {e}")
         return _safe_error('Failed to load obstacles', e)
+
 
 @app.route('/api/geocode/suggest', methods=['GET'])
 @limiter.limit("30 per minute")
@@ -2107,6 +2127,7 @@ def geocode_suggest():
         logger.error(f"Error in geocode_suggest: {e}")
         return _safe_error('Geocoding failed', e)
 
+
 @app.route('/api/geocode/reverse', methods=['GET'])
 def geocode_reverse():
     """Reverse geocode lat/lng to a human label via Nominatim (OpenStreetMap)."""
@@ -2130,6 +2151,7 @@ def geocode_reverse():
         logger.error(f"Error in geocode_reverse: {e}")
         return _safe_error('Reverse geocoding failed', e)
 
+
 @app.route('/api/health', methods=['GET'])
 @require_role('viewer')
 def health():
@@ -2137,6 +2159,7 @@ def health():
     try:
         uptime_s = _time.time() - _START_TIME
         # Optional package versions
+
         def _ver(mod_name):
             try:
                 m = __import__(mod_name)
@@ -2202,6 +2225,7 @@ def health():
         logger.error(f"Error in /api/health: {e}")
         return _safe_error('Health check failed', e)
 
+
 @app.route('/api/config', methods=['GET'])
 @require_role('viewer')
 def get_config():
@@ -2217,6 +2241,7 @@ def get_config():
     except Exception as e:
         logger.error(f"Error reading config: {e}")
         return _safe_error('Failed to read configuration', e)
+
 
 @app.route('/api/config', methods=['POST'])
 @require_role('admin')
@@ -2253,6 +2278,7 @@ def update_config():
         logger.error(f"Error updating config: {e}")
         return _safe_error('Failed to update configuration', e)
 
+
 @app.route('/api/logs/segmentation/latest', methods=['GET'])
 @require_role('viewer')
 def get_latest_segmentation_log():
@@ -2281,22 +2307,26 @@ def get_latest_segmentation_log():
 
 # WebSocket Events for Real-time Communication
 
+
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection"""
     logger.info('Client connected to WebSocket')
     emit('connected', {'message': 'Connected to Lesnar AI Drone API'})
 
+
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection"""
     logger.info('Client disconnected from WebSocket')
+
 
 @socketio.on('subscribe_telemetry')
 def handle_subscribe_telemetry():
     """Subscribe to real-time telemetry"""
     logger.info('Client subscribed to telemetry updates')
     emit('telemetry_subscribed', {'message': 'Subscribed to telemetry updates'})
+
 
 def broadcast_telemetry():
     """Broadcast telemetry data to all connected clients"""
@@ -2358,6 +2388,7 @@ def broadcast_telemetry():
             logger.error(f"Error broadcasting telemetry: {e}")
             _telemetry_stop.wait(TELEMETRY_SLEEP_S)
 
+
 def start_telemetry_broadcast():
     """Start telemetry broadcasting thread"""
     global telemetry_thread
@@ -2371,14 +2402,17 @@ def start_telemetry_broadcast():
     telemetry_thread.start()
     logger.info("Telemetry broadcasting started")
 
+
 def stop_telemetry_broadcast():
     """Stop telemetry broadcasting"""
     _telemetry_stop.set()
     logger.info("Telemetry broadcasting stopped")
 
+
 # --- Redis Bridge ---
 redis_bridge_thread = None
 _redis_bridge_stop = threading.Event()
+
 
 def redis_bridge_loop():
     """Listen for telemetry from external agents (Teacher/Sentinel)."""
@@ -2392,7 +2426,7 @@ def redis_bridge_loop():
                 pubsub = r.pubsub()
                 pubsub.subscribe('telemetry')
                 logger.info(f"Redis Bridge connected ({_REDIS_HOST}:{_REDIS_PORT}). Listening for telemetry...")
-            
+
             message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if message and message['type'] == 'message':
                 try:
@@ -2432,7 +2466,7 @@ def redis_bridge_loop():
                                 d.running = False
                         except Exception:
                             pass
-                    
+
                     drone = fleet.get_drone(drone_id)
                     if drone:
                         prev_lat = _safe_float(data.get('latitude', drone.position[0]), drone.position[0])
@@ -2461,9 +2495,12 @@ def redis_bridge_loop():
                         else:
                             reported_speed = _safe_float(reported_speed, drone.speed)
                             drone.speed = float(derived_speed if reported_speed <= 0.05 and derived_speed is not None else reported_speed)
-                        if 'battery' in data: drone.battery = float(data['battery'])
-                        if 'armed' in data: drone.armed = bool(data['armed'])
-                        if 'mode' in data: drone.mode = str(data['mode'])
+                        if 'battery' in data:
+                            drone.battery = float(data['battery'])
+                        if 'armed' in data:
+                            drone.armed = bool(data['armed'])
+                        if 'mode' in data:
+                            drone.mode = str(data['mode'])
                         drone.is_flying = bool(data.get('in_air', drone.is_flying or prev_alt > FLYING_ALTITUDE_THRESHOLD or drone.speed > 0.8))
                         mission_status = data.get('mission_status')
                         if mission_status in ('ACTIVE', 'PAUSED'):
@@ -2483,12 +2520,14 @@ def redis_bridge_loop():
                 except Exception as e:
                     logger.debug(f"bad telemetry packet: {e}")
         except redis.ConnectionError:
-            if r: logger.warning("Redis connection lost. Retrying...")
+            if r:
+                logger.warning("Redis connection lost. Retrying...")
             r = None
             _redis_bridge_stop.wait(REDIS_RETRY_DELAY_S)
         except Exception as e:
             logger.error(f"Redis Bridge error: {e}")
             _redis_bridge_stop.wait(1)
+
 
 def start_redis_bridge():
     global redis_bridge_thread
@@ -2499,6 +2538,8 @@ def start_redis_bridge():
     redis_bridge_thread.start()
 
 # Initialize some demo drones
+
+
 def initialize_demo_fleet():
     """Initialize fleet from DB and optionally seed demo drones."""
     logger.info("Initializing drone fleet...")
@@ -2567,18 +2608,19 @@ def initialize_demo_fleet():
         pass
     logger.info("Seeded demo fleet with 3 drones")
 
+
 if __name__ == '__main__':
     print("=== Lesnar AI Backend API Server ===")
     print("Advanced drone control and monitoring API")
     print("Copyright © 2025 Lesnar AI Ltd.")
     print("-" * 40)
-    
+
     # Initialize demo fleet
     initialize_demo_fleet()
 
     # Start telemetry broadcasting
     start_telemetry_broadcast()
-    
+
     # Start Redis Bridge (Input from Teacher)
     start_redis_bridge()
 
@@ -2592,7 +2634,7 @@ if __name__ == '__main__':
             debug=False,
             allow_unsafe_werkzeug=allow_unsafe_werkzeug,
         )
-    
+
     except KeyboardInterrupt:
         print("\nShutting down server...")
         stop_telemetry_broadcast()
@@ -2601,5 +2643,5 @@ if __name__ == '__main__':
         # Clean up drones
         for drone_id in list(fleet.drones.keys()):
             fleet.remove_drone(drone_id)
-        
+
         print("Server stopped")
