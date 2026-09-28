@@ -40,6 +40,7 @@ except Exception:
     VelocityNedYaw = None
 
 LOG_PATH = "teacher_runtime.log"
+MISSION_OFFBOARD_TRIES = 10     # 2 s apart; after this an external mission is aborted, not left hovering
 _LOCK_BASENAME = "lesnar_px4_teacher_collect_gz"
 _LOCK_HANDLE = None
 
@@ -1349,30 +1350,39 @@ async def collect_data(args):
 
     offboard_active = False
 
-    async def ensure_offboard_started():
+    async def ensure_offboard_started(attempts: int = 5):
         nonlocal offboard_active
         warmup_hz = max(5.0, float(args.hz))
 
-        async def _warmup(duration_s: float):
-            warmup_count = int(warmup_hz * duration_s)
-            for _ in range(max(1, warmup_count)):
-                await drone.offboard.set_velocity_ned(VelocityNedYaw(0.0, 0.0, 0.0, dstate.yaw))
-                await asyncio.sleep(1.0 / warmup_hz)
+        def _hold():
+            return VelocityNedYaw(0.0, 0.0, 0.0, dstate.yaw)
 
-        await _warmup(1.0)
-        try:
-            await drone.offboard.start()
-        except OffboardError as e:
-            text = str(e).lower()
-            if 'already started' in text:
+        # Stream a short warmup so PX4 sees an offboard signal.
+        for _ in range(max(1, int(warmup_hz))):
+            await drone.offboard.set_velocity_ned(_hold())
+            await asyncio.sleep(1.0 / warmup_hz)
+
+        # MAVSDK stops streaming setpoints on any heartbeat that shows the vehicle outside
+        # offboard mode once its grace period has passed, and start() then reports
+        # NO_SETPOINT_SET. A heartbeat that lands between the last warmup setpoint and
+        # start() is enough. So send a setpoint immediately before every start(), and retry.
+        last_exc = None
+        for _ in range(max(1, attempts)):
+            await drone.offboard.set_velocity_ned(_hold())
+            try:
+                await drone.offboard.start()
                 offboard_active = True
                 return
-            if 'no setpoint set' in text:
-                await _warmup(2.0)
-                await drone.offboard.start()
-            else:
-                raise
-        offboard_active = True
+            except OffboardError as e:
+                text = str(e).lower()
+                if 'already started' in text:
+                    offboard_active = True
+                    return
+                if 'no setpoint set' not in text:
+                    raise
+                last_exc = e
+                await asyncio.sleep(1.0 / warmup_hz)
+        raise last_exc
 
     if args.bridge_only:
         print("--> Control bridge mode active; awaiting app commands...")
@@ -1757,16 +1767,26 @@ async def collect_data(args):
                 # takeoff command even when the drone is still on the ground, which would
                 # prematurely cancel AUTO.TAKEOFF and lock the drone at ground level in OFFBOARD
                 # mode with vz=0.  Require rel_alt to be within 1.5 m of the target altitude.
-                if dstate.rel_alt >= max(2.0, target_alt - 1.5):
-                    try:
-                        if not offboard_active:
+                if dstate.rel_alt >= max(2.0, target_alt - 1.5) and now >= float(external_mission.get("offboard_retry_at") or 0.0):
+                    # Navigation needs offboard control. Without it PX4 keeps holding after
+                    # takeoff and ignores every setpoint, so never engage the mission until
+                    # offboard is active: retry, and abort explicitly if it cannot be had.
+                    if not offboard_active:
+                        try:
                             await ensure_offboard_started()
-                    except Exception as mission_offboard_exc:
-                        log(f"!! Mission offboard start warning: {mission_offboard_exc}")
-                    wp = external_mission["waypoints"][external_mission["current_idx"]]
-                    set_goal_from_global(float(wp[0]), float(wp[1]))
-                    external_mission["await_takeoff_alt"] = None
-                    log(f"--> External mission navigation engaged for waypoint {external_mission['current_idx'] + 1}")
+                        except Exception as mission_offboard_exc:
+                            tries = int(external_mission.get("offboard_tries") or 0) + 1
+                            external_mission["offboard_tries"] = tries
+                            external_mission["offboard_retry_at"] = now + 2.0
+                            log(f"!! Mission offboard start warning ({tries}/{MISSION_OFFBOARD_TRIES}): {mission_offboard_exc}")
+                            if tries >= MISSION_OFFBOARD_TRIES:
+                                external_mission["status"] = "FAILED"
+                                log("!! External mission aborted: offboard control could not be engaged")
+                    if offboard_active and external_mission.get("status") == "ACTIVE":
+                        wp = external_mission["waypoints"][external_mission["current_idx"]]
+                        set_goal_from_global(float(wp[0]), float(wp[1]))
+                        external_mission["await_takeoff_alt"] = None
+                        log(f"--> External mission navigation engaged for waypoint {external_mission['current_idx'] + 1}")
 
             takeoff_nav_hold = (
                 takeoff_target_alt is not None
