@@ -1,10 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Shield, ChevronRight, X, Download } from 'lucide-react';
+import { Terminal, Activity, ChevronRight, X, Download } from 'lucide-react';
 import { readOperatorAuditLog, subscribeOperatorAudit } from '../utils/operatorAudit';
+
+const MAX_ENTRIES = 100;
+
+// Colours for the three link modes App derives from measured state (utils/operational.js).
+const LINK_TONES = {
+    nominal: { dot: 'bg-lesnar-success', text: 'text-lesnar-success' },
+    degraded: { dot: 'bg-lesnar-warning', text: 'text-lesnar-warning' },
+    lost: { dot: 'bg-lesnar-danger', text: 'text-lesnar-danger' },
+};
+const UNKNOWN_TONE = { dot: 'bg-gray-600', text: 'text-gray-500' };
 
 function DiagnosticTerminal({ logs = [], socket, onClose, linkMetrics }) {
     const [terminalLogs, setTerminalLogs] = useState([]);
     const bottomRef = useRef(null);
+    const linkTone = LINK_TONES[linkMetrics?.linkMode?.key] || UNKNOWN_TONE;
+    const linkLabel = linkMetrics?.linkMode?.label || 'Unknown';
 
     // Helper to add a log entry
     const handleLog = (type, message, level = 'INFO') => {
@@ -17,7 +29,7 @@ function DiagnosticTerminal({ logs = [], socket, onClose, linkMetrics }) {
                 level,
                 time: new Date().toLocaleTimeString()
             }
-        ].slice(-100));
+        ].slice(-MAX_ENTRIES));
     };
 
     // Socket listeners
@@ -43,28 +55,24 @@ function DiagnosticTerminal({ logs = [], socket, onClose, linkMetrics }) {
         };
     }, [socket]);
 
-    // Initialize with boot sequence
+    // Report the backend link as App measures it, once on open and on every change.
+    // Degraded is reported by the link metrics effect below.
+    const linkKey = linkMetrics?.linkMode?.key;
+    const prevLinkKey = useRef(null);
     useEffect(() => {
-        const bootSequence = [
-            '>> INITIATING LESNAR.AI TACTICAL LINK...',
-            '>> SYNCING MAVLINK PROTOCOLS...',
-            '>> ENCRYPTION LAYER: AES-256-GCM ACTIVE',
-            '>> DRONE FLEET HANDSHAKE: SUCCESS',
-            '>> SYSTEM STATUS: OPTIMAL'
-        ];
-
-        let i = 0;
-        const interval = setInterval(() => {
-            if (i < bootSequence.length) {
-                handleLog('info', bootSequence[i], 'info');
-                i++;
-            } else {
-                clearInterval(interval);
-            }
-        }, 300);
-
-        return () => clearInterval(interval);
-    }, []);
+        const prev = prevLinkKey.current;
+        prevLinkKey.current = linkKey;
+        if (!linkKey || linkKey === prev) return;
+        if (linkKey === 'lost') {
+            if (prev === null) handleLog('info', 'Waiting for the backend socket.', 'info');
+            else handleLog('error', 'Backend socket disconnected.', 'error');
+        } else if (prev === null || prev === 'lost') {
+            // Degraded and nominal both mean the socket is connected (getLinkMode).
+            handleLog('info', 'Backend socket connected.', 'success');
+        } else if (linkKey === 'nominal') {
+            handleLog('info', 'Link back to nominal.', 'success');
+        }
+    }, [linkKey]);
 
     useEffect(() => {
         const existing = readOperatorAuditLog().slice(-12).map((entry) => ({
@@ -75,7 +83,7 @@ function DiagnosticTerminal({ logs = [], socket, onClose, linkMetrics }) {
             time: new Date(entry.timestamp).toLocaleTimeString(),
         }));
         if (existing.length > 0) {
-            setTerminalLogs((prev) => [...prev, ...existing].slice(-100));
+            setTerminalLogs((prev) => [...prev, ...existing].slice(-MAX_ENTRIES));
         }
         return subscribeOperatorAudit((entry) => {
             handleLog(entry.type || 'audit', entry.message, entry.level || 'info');
@@ -83,10 +91,10 @@ function DiagnosticTerminal({ logs = [], socket, onClose, linkMetrics }) {
     }, []);
 
     useEffect(() => {
-        if (linkMetrics?.degradedMode) {
+        if (linkMetrics?.degradedMode && linkKey !== 'lost') {
             handleLog('warning', `Link degraded: RTT ${linkMetrics?.latencyMs ?? '—'}ms, telemetry age ${Number.isFinite(linkMetrics?.telemetryAgeMs) ? Math.round(linkMetrics.telemetryAgeMs) : '—'}ms.`, 'warning');
         }
-    }, [linkMetrics?.degradedMode, linkMetrics?.latencyMs, linkMetrics?.telemetryAgeMs]);
+    }, [linkKey, linkMetrics?.degradedMode, linkMetrics?.latencyMs, linkMetrics?.telemetryAgeMs]);
 
     // Sync with incoming logs from props
     useEffect(() => {
@@ -95,7 +103,7 @@ function DiagnosticTerminal({ logs = [], socket, onClose, linkMetrics }) {
                 ...l,
                 id: Date.now() + Math.random(),
                 time: new Date().toLocaleTimeString()
-            }))].slice(-100));
+            }))].slice(-MAX_ENTRIES));
         }
     }, [logs]);
 
@@ -126,8 +134,8 @@ function DiagnosticTerminal({ logs = [], socket, onClose, linkMetrics }) {
                     <button onClick={downloadConsoleLog} className="hover:bg-white/5 p-1 rounded transition-colors text-gray-500 hover:text-white" title="Download console log">
                         <Download className="h-4 w-4" />
                     </button>
-                    <div className="h-1.5 w-1.5 bg-lesnar-success rounded-full" />
-                    <span className="text-[8px] font-mono text-lesnar-success uppercase px-1">Live_Stream</span>
+                    <div className={`h-1.5 w-1.5 rounded-full ${linkTone.dot}`} />
+                    <span className={`text-[8px] font-mono uppercase px-1 ${linkTone.text}`}>{linkLabel}</span>
                     {onClose && (
                         <button onClick={onClose} className="ml-2 hover:bg-white/5 p-1 rounded transition-colors text-gray-500 hover:text-white">
                             <X className="h-4 w-4" />
@@ -159,22 +167,17 @@ function DiagnosticTerminal({ logs = [], socket, onClose, linkMetrics }) {
             <div className="bg-navy-black/60 p-3 border-t border-white/5 flex items-center justify-between">
                 <div className="flex items-center space-x-4">
                     <div className="flex flex-col">
-                        <span className="text-[7px] text-gray-600 font-mono uppercase">Buffer Size</span>
-                        <span className="text-[9px] text-white/70 font-mono">1024 KB</span>
+                        <span className="text-[7px] text-gray-600 font-mono uppercase">Entries</span>
+                        <span className="text-[9px] text-white/70 font-mono">{terminalLogs.length} / {MAX_ENTRIES}</span>
                     </div>
                     <div className="flex flex-col">
-                        <span className="text-[7px] text-gray-600 font-mono uppercase">Signal Strength</span>
-                        <div className="flex space-x-0.5 mt-0.5">
-                            <div className="h-2 w-1 bg-lesnar-accent" />
-                            <div className="h-2 w-1 bg-lesnar-accent" />
-                            <div className="h-2 w-1 bg-lesnar-accent" />
-                            <div className="h-2 w-1 bg-gray-700" />
-                        </div>
+                        <span className="text-[7px] text-gray-600 font-mono uppercase">Health RTT</span>
+                        <span className="text-[9px] text-white/70 font-mono">{Number.isFinite(linkMetrics?.latencyMs) ? `${linkMetrics.latencyMs} ms` : 'n/a'}</span>
                     </div>
                 </div>
                 <div className="flex items-center space-x-2">
-                    <Shield className={`h-3 w-3 ${linkMetrics?.degradedMode ? 'text-lesnar-warning' : 'text-lesnar-success'}`} />
-                    <span className="text-[8px] font-mono text-gray-500 uppercase">{linkMetrics?.degradedMode ? 'Secure Link // Degraded' : 'Secure Link // OK'}</span>
+                    <Activity className={`h-3 w-3 ${linkTone.text}`} />
+                    <span className="text-[8px] font-mono text-gray-500 uppercase">Backend link // {linkLabel}</span>
                 </div>
             </div>
         </div>
