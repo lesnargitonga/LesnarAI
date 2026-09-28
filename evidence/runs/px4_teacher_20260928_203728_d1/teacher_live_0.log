@@ -1,0 +1,888 @@
+[2026-09-28T17:37:42Z] Teacher script started
+[2026-09-28T17:37:42Z] --> Starting teacher (ONLINE)...
+Loading map from obstacles.sdf...
+Loaded 180 obstacles.
+[2026-09-28T17:37:42Z] --> Map loaded.
+Grid Size: 535x540, Bounds: x[-268.0,267.0] y[-270.0,270.0]
+Rasterizing obstacles...
+Computing clearance field...
+Clearance field ready.
+[2026-09-28T17:37:43Z] --> Grid ready.
+[2026-09-28T17:37:43Z] --> Redis connected (Bridge Established) at 127.0.0.1:6379
+[2026-09-28T17:37:43Z] --> Connecting to udpin://127.0.0.1:14540...
+[2026-09-28T17:37:43Z] --> Waiting for drone (timeout 30s)...
+[2026-09-28T17:37:43Z] --> Connected!
+[2026-09-28T17:37:43Z] --> PX4 param applied: COM_ARM_WO_GPS=1
+[2026-09-28T17:37:43Z] --> PX4 param applied: COM_DISARM_PRFLT=60.0
+[2026-09-28T17:37:43Z] --> PX4 param applied: COM_PREARM_MODE=0
+--> Control bridge mode active; awaiting app commands...
+[2026-09-28T17:37:45Z] FALCON metrics | xtrack=-0.00m head_err=0.0deg sideslip=3.5deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.02mps
+[2026-09-28T17:37:47Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=0.7deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:37:48Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=0.3deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:37:50Z] FALCON metrics | xtrack=-0.00m head_err=0.0deg sideslip=0.9deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:37:52Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=1.9deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:37:53Z] FALCON metrics | xtrack=-0.00m head_err=0.0deg sideslip=-0.9deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:37:55Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=-2.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:37:56Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=-1.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:37:58Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=-0.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:38:00Z] FALCON metrics | xtrack=-0.00m head_err=0.0deg sideslip=-2.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:38:00Z] --> Received Command: mission_start
+[2026-09-28T17:38:03Z] --> External mission armed; awaiting climb to 10.0m
+[2026-09-28T17:38:03Z] FALCON metrics | xtrack=0.00m head_err=-102.2deg sideslip=1.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:38:04Z] FALCON metrics | xtrack=0.00m head_err=-114.5deg sideslip=-1.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:38:06Z] FALCON metrics | xtrack=-0.00m head_err=-47.7deg sideslip=4.5deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.04mps
+[2026-09-28T17:38:07Z] FALCON metrics | xtrack=-0.00m head_err=-79.9deg sideslip=-2.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:38:09Z] FALCON metrics | xtrack=-0.00m head_err=-60.6deg sideslip=0.3deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:38:11Z] FALCON metrics | xtrack=-0.00m head_err=-73.4deg sideslip=1.9deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:38:13Z] --> External mission navigation engaged for waypoint 1
+Planning A* to -0,25...
+Path found! 2 waypoints
+[2026-09-28T17:38:13Z] FALCON metrics | xtrack=1.00m head_err=96.9deg sideslip=-0.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+Received ack for not-existing command: 176! Ignoring... (mavlink_command_sender.cpp:304)
+[2026-09-28T17:38:15Z] FALCON metrics | xtrack=1.02m head_err=74.2deg sideslip=-2.9deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:38:16Z] FALCON metrics | xtrack=1.13m head_err=57.8deg sideslip=-0.9deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.03mps
+[2026-09-28T17:38:18Z] FALCON metrics | xtrack=1.18m head_err=41.5deg sideslip=-2.3deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.04mps
+[2026-09-28T17:38:20Z] FALCON metrics | xtrack=1.27m head_err=25.2deg sideslip=-2.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.11mps
+[2026-09-28T17:38:21Z] FALCON metrics | xtrack=1.44m head_err=7.8deg sideslip=-5.3deg front_clear=20.00m geom_clear=14.00m tilt=0.1deg progress=1.01mps
+[2026-09-28T17:38:23Z] FALCON metrics | xtrack=1.55m head_err=-0.1deg sideslip=-0.1deg front_clear=20.00m geom_clear=14.00m tilt=0.1deg progress=1.80mps
+[2026-09-28T17:38:24Z] FALCON metrics | xtrack=1.50m head_err=0.1deg sideslip=-0.7deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.86mps
+[2026-09-28T17:38:26Z] FALCON metrics | xtrack=1.44m head_err=0.2deg sideslip=-0.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.85mps
+[2026-09-28T17:38:28Z] FALCON metrics | xtrack=1.29m head_err=0.2deg sideslip=-0.5deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.83mps
+[2026-09-28T17:38:29Z] FALCON metrics | xtrack=1.10m head_err=0.4deg sideslip=-0.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.82mps
+[2026-09-28T17:38:31Z] FALCON metrics | xtrack=0.87m head_err=0.5deg sideslip=-0.6deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.80mps
+[2026-09-28T17:38:32Z] FALCON metrics | xtrack=0.59m head_err=1.1deg sideslip=-1.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.79mps
+[2026-09-28T17:38:33Z] --> External mission advanced to waypoint 2/4
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:38:34Z] FALCON metrics | xtrack=-1.46m head_err=-93.5deg sideslip=1.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.12mps
+[2026-09-28T17:38:36Z] FALCON metrics | xtrack=-1.71m head_err=-77.6deg sideslip=-3.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:38:37Z] FALCON metrics | xtrack=-1.76m head_err=-61.5deg sideslip=-5.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.03mps
+[2026-09-28T17:38:39Z] FALCON metrics | xtrack=-1.74m head_err=-44.9deg sideslip=-5.7deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.04mps
+[2026-09-28T17:38:40Z] FALCON metrics | xtrack=-1.75m head_err=-28.8deg sideslip=-4.0deg front_clear=11.59m geom_clear=14.00m tilt=0.0deg progress=0.08mps
+[2026-09-28T17:38:42Z] FALCON metrics | xtrack=-1.78m head_err=-12.4deg sideslip=1.2deg front_clear=12.48m geom_clear=14.00m tilt=0.0deg progress=0.52mps
+[2026-09-28T17:38:44Z] FALCON metrics | xtrack=-2.02m head_err=0.8deg sideslip=4.3deg front_clear=13.48m geom_clear=14.00m tilt=0.0deg progress=1.76mps
+[2026-09-28T17:38:45Z] FALCON metrics | xtrack=-2.03m head_err=-0.3deg sideslip=0.2deg front_clear=10.55m geom_clear=14.00m tilt=0.0deg progress=1.85mps
+[2026-09-28T17:38:47Z] FALCON metrics | xtrack=-1.94m head_err=-0.4deg sideslip=-0.0deg front_clear=7.79m geom_clear=14.00m tilt=0.0deg progress=1.84mps
+[2026-09-28T17:38:49Z] FALCON metrics | xtrack=-1.79m head_err=-0.4deg sideslip=0.4deg front_clear=4.97m geom_clear=14.00m tilt=0.0deg progress=1.83mps
+[2026-09-28T17:38:50Z] FALCON metrics | xtrack=-1.64m head_err=-0.4deg sideslip=0.3deg front_clear=2.64m geom_clear=14.00m tilt=0.0deg progress=0.96mps
+[2026-09-28T17:38:52Z] FALCON metrics | xtrack=-1.57m head_err=-0.3deg sideslip=-2.9deg front_clear=1.65m geom_clear=14.00m tilt=0.0deg progress=0.16mps
+[2026-09-28T17:38:53Z] Stuck-hover escape -> replan current objective (2.0s stuck, speed=0.05, front=1.57, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:38:54Z] FALCON metrics | xtrack=-0.65m head_err=-1.7deg sideslip=-1.4deg front_clear=1.58m geom_clear=14.00m tilt=0.0deg progress=-0.06mps
+[2026-09-28T17:38:55Z] FALCON metrics | xtrack=-0.54m head_err=0.2deg sideslip=-2.9deg front_clear=1.49m geom_clear=14.00m tilt=0.0deg progress=-0.05mps
+[2026-09-28T17:38:57Z] FALCON metrics | xtrack=-0.51m head_err=0.1deg sideslip=-0.6deg front_clear=1.56m geom_clear=14.00m tilt=0.0deg progress=-0.04mps
+[2026-09-28T17:38:57Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.04, front=1.58, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:38:58Z] FALCON metrics | xtrack=-0.50m head_err=0.1deg sideslip=-1.2deg front_clear=1.65m geom_clear=14.00m tilt=0.0deg progress=-0.02mps
+[2026-09-28T17:39:00Z] FALCON metrics | xtrack=-0.50m head_err=-0.0deg sideslip=0.8deg front_clear=1.69m geom_clear=14.00m tilt=0.0deg progress=-0.02mps
+[2026-09-28T17:39:01Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.02, front=1.71, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:02Z] FALCON metrics | xtrack=-0.48m head_err=-0.0deg sideslip=-0.0deg front_clear=1.73m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:39:03Z] FALCON metrics | xtrack=-0.50m head_err=-0.0deg sideslip=1.0deg front_clear=1.76m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:39:04Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.78, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:05Z] FALCON metrics | xtrack=-0.48m head_err=-0.0deg sideslip=-0.3deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:06Z] FALCON metrics | xtrack=-0.45m head_err=-0.1deg sideslip=0.7deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:08Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:08Z] FALCON metrics | xtrack=-0.46m head_err=-0.0deg sideslip=0.6deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:39:10Z] FALCON metrics | xtrack=-0.49m head_err=0.0deg sideslip=0.1deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:11Z] FALCON metrics | xtrack=-0.46m head_err=0.0deg sideslip=-0.8deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:11Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:13Z] FALCON metrics | xtrack=-0.46m head_err=-0.0deg sideslip=-0.2deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:14Z] FALCON metrics | xtrack=-0.48m head_err=-0.1deg sideslip=1.5deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:15Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.88, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:16Z] FALCON metrics | xtrack=-0.46m head_err=0.0deg sideslip=-0.8deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:18Z] FALCON metrics | xtrack=-0.44m head_err=0.0deg sideslip=-0.2deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:39:19Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:19Z] FALCON metrics | xtrack=-0.47m head_err=-0.0deg sideslip=0.5deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:21Z] FALCON metrics | xtrack=-0.49m head_err=-0.0deg sideslip=0.3deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:22Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:22Z] FALCON metrics | xtrack=-0.49m head_err=-0.0deg sideslip=-0.3deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:24Z] FALCON metrics | xtrack=-0.49m head_err=-0.0deg sideslip=0.5deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:26Z] FALCON metrics | xtrack=-0.51m head_err=-0.0deg sideslip=-0.1deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:39:26Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:27Z] FALCON metrics | xtrack=-0.53m head_err=-0.0deg sideslip=0.5deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:29Z] FALCON metrics | xtrack=-0.53m head_err=-0.0deg sideslip=0.0deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:29Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:30Z] FALCON metrics | xtrack=-0.50m head_err=0.0deg sideslip=-0.4deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:39:32Z] FALCON metrics | xtrack=-0.50m head_err=-0.0deg sideslip=0.6deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:33Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:34Z] FALCON metrics | xtrack=-0.52m head_err=-0.0deg sideslip=0.6deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:35Z] FALCON metrics | xtrack=-0.51m head_err=0.0deg sideslip=-0.1deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:37Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.88, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:37Z] FALCON metrics | xtrack=-0.48m head_err=0.1deg sideslip=-0.7deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:39:38Z] FALCON metrics | xtrack=-0.45m head_err=0.0deg sideslip=-1.0deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:40Z] FALCON metrics | xtrack=-0.50m head_err=-0.1deg sideslip=2.2deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:40Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:42Z] FALCON metrics | xtrack=-0.48m head_err=0.0deg sideslip=-1.0deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:43Z] FALCON metrics | xtrack=-0.48m head_err=0.0deg sideslip=0.2deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:44Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:45Z] FALCON metrics | xtrack=-0.45m head_err=0.0deg sideslip=-0.9deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:47Z] FALCON metrics | xtrack=-0.42m head_err=-0.0deg sideslip=0.2deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:48Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:48Z] FALCON metrics | xtrack=-0.43m head_err=0.0deg sideslip=0.2deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:50Z] FALCON metrics | xtrack=-0.41m head_err=-0.0deg sideslip=0.3deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:51Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:51Z] FALCON metrics | xtrack=-0.42m head_err=-0.0deg sideslip=0.6deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:53Z] FALCON metrics | xtrack=-0.40m head_err=0.0deg sideslip=-0.5deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:39:55Z] FALCON metrics | xtrack=-0.40m head_err=0.0deg sideslip=-0.5deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:39:55Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:56Z] FALCON metrics | xtrack=-0.40m head_err=-0.0deg sideslip=0.1deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:58Z] FALCON metrics | xtrack=-0.42m head_err=-0.0deg sideslip=0.3deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:39:58Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.84, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:39:59Z] FALCON metrics | xtrack=-0.43m head_err=-0.1deg sideslip=1.4deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:01Z] FALCON metrics | xtrack=-0.43m head_err=0.1deg sideslip=-1.5deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:02Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.83, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:03Z] FALCON metrics | xtrack=-0.44m head_err=-0.0deg sideslip=0.9deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:40:04Z] FALCON metrics | xtrack=-0.46m head_err=0.0deg sideslip=-0.5deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:40:06Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.82, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:06Z] FALCON metrics | xtrack=-0.42m head_err=0.0deg sideslip=-1.1deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:40:07Z] FALCON metrics | xtrack=-0.44m head_err=0.0deg sideslip=0.4deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:09Z] FALCON metrics | xtrack=-0.44m head_err=0.0deg sideslip=-0.1deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:40:09Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:11Z] FALCON metrics | xtrack=-0.43m head_err=-0.0deg sideslip=0.2deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:12Z] FALCON metrics | xtrack=-0.40m head_err=0.0deg sideslip=-0.8deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:13Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:14Z] FALCON metrics | xtrack=-0.40m head_err=0.0deg sideslip=-0.7deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:15Z] FALCON metrics | xtrack=-0.38m head_err=-0.1deg sideslip=1.0deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:16Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:17Z] FALCON metrics | xtrack=-0.40m head_err=0.0deg sideslip=-0.2deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:19Z] FALCON metrics | xtrack=-0.38m head_err=0.0deg sideslip=-0.3deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:20Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:20Z] FALCON metrics | xtrack=-0.38m head_err=0.0deg sideslip=0.0deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:22Z] FALCON metrics | xtrack=-0.37m head_err=-0.0deg sideslip=0.8deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:40:23Z] FALCON metrics | xtrack=-0.37m head_err=0.0deg sideslip=-0.1deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:24Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:25Z] FALCON metrics | xtrack=-0.35m head_err=0.0deg sideslip=-0.5deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:27Z] FALCON metrics | xtrack=-0.37m head_err=-0.1deg sideslip=2.0deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:27Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.88, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:28Z] FALCON metrics | xtrack=-0.34m head_err=0.1deg sideslip=-1.5deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:40:30Z] FALCON metrics | xtrack=-0.34m head_err=-0.0deg sideslip=0.7deg front_clear=1.91m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:40:31Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.88, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:31Z] FALCON metrics | xtrack=-0.35m head_err=0.0deg sideslip=-0.9deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:33Z] FALCON metrics | xtrack=-0.34m head_err=-0.0deg sideslip=-0.4deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:34Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.88, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:35Z] FALCON metrics | xtrack=-0.38m head_err=-0.1deg sideslip=1.5deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:40:36Z] FALCON metrics | xtrack=-0.40m head_err=0.0deg sideslip=0.2deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:38Z] FALCON metrics | xtrack=-0.41m head_err=0.0deg sideslip=-0.4deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:38Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.88, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:39Z] FALCON metrics | xtrack=-0.38m head_err=0.0deg sideslip=-1.2deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:41Z] FALCON metrics | xtrack=-0.36m head_err=-0.0deg sideslip=-0.6deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:42Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:43Z] FALCON metrics | xtrack=-0.37m head_err=-0.0deg sideslip=0.5deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:44Z] FALCON metrics | xtrack=-0.40m head_err=-0.0deg sideslip=1.3deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:45Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.82, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:46Z] FALCON metrics | xtrack=-0.36m head_err=0.1deg sideslip=-0.9deg front_clear=1.83m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:48Z] FALCON metrics | xtrack=-0.36m head_err=-0.0deg sideslip=0.4deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:40:49Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.83, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:49Z] FALCON metrics | xtrack=-0.38m head_err=-0.0deg sideslip=0.5deg front_clear=1.83m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:51Z] FALCON metrics | xtrack=-0.38m head_err=-0.0deg sideslip=-0.7deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:52Z] FALCON metrics | xtrack=-0.40m head_err=-0.1deg sideslip=1.7deg front_clear=1.83m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:40:53Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.83, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:54Z] FALCON metrics | xtrack=-0.42m head_err=0.0deg sideslip=-0.4deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:56Z] FALCON metrics | xtrack=-0.42m head_err=-0.0deg sideslip=0.6deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:40:56Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.78, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:40:57Z] FALCON metrics | xtrack=-0.40m head_err=0.1deg sideslip=-1.0deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:40:59Z] FALCON metrics | xtrack=-0.39m head_err=0.0deg sideslip=-0.5deg front_clear=1.80m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:00Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.80, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:00Z] FALCON metrics | xtrack=-0.37m head_err=0.0deg sideslip=-0.4deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:02Z] FALCON metrics | xtrack=-0.38m head_err=-0.0deg sideslip=0.3deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:41:03Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.81, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:04Z] FALCON metrics | xtrack=-0.38m head_err=-0.0deg sideslip=0.4deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:05Z] FALCON metrics | xtrack=-0.39m head_err=-0.0deg sideslip=0.6deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:07Z] FALCON metrics | xtrack=-0.40m head_err=-0.0deg sideslip=0.7deg front_clear=1.76m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:07Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.76, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:08Z] FALCON metrics | xtrack=-0.36m head_err=0.1deg sideslip=-1.0deg front_clear=1.77m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:41:10Z] FALCON metrics | xtrack=-0.37m head_err=-0.0deg sideslip=0.5deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:11Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.78, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:12Z] FALCON metrics | xtrack=-0.36m head_err=0.0deg sideslip=-0.4deg front_clear=1.78m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:41:13Z] FALCON metrics | xtrack=-0.35m head_err=-0.0deg sideslip=1.1deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:14Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.79, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:15Z] FALCON metrics | xtrack=-0.34m head_err=0.0deg sideslip=-0.8deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:16Z] FALCON metrics | xtrack=-0.31m head_err=0.0deg sideslip=-0.3deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:18Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.81, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:18Z] FALCON metrics | xtrack=-0.32m head_err=-0.0deg sideslip=1.2deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:41:20Z] FALCON metrics | xtrack=-0.31m head_err=0.1deg sideslip=-1.0deg front_clear=1.80m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:41:21Z] FALCON metrics | xtrack=-0.32m head_err=-0.0deg sideslip=0.1deg front_clear=1.80m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:41:21Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.81, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:23Z] FALCON metrics | xtrack=-0.32m head_err=-0.1deg sideslip=1.0deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:24Z] FALCON metrics | xtrack=-0.30m head_err=0.0deg sideslip=-1.1deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:25Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.80, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:26Z] FALCON metrics | xtrack=-0.29m head_err=0.0deg sideslip=-0.4deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:41:28Z] FALCON metrics | xtrack=-0.26m head_err=0.0deg sideslip=-0.4deg front_clear=1.83m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:41:29Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:29Z] FALCON metrics | xtrack=-0.27m head_err=-0.0deg sideslip=1.0deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:31Z] FALCON metrics | xtrack=-0.29m head_err=-0.0deg sideslip=0.6deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:32Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.81, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:32Z] FALCON metrics | xtrack=-0.28m head_err=0.0deg sideslip=-0.3deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:41:34Z] FALCON metrics | xtrack=-0.23m head_err=0.1deg sideslip=-1.7deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:41:36Z] FALCON metrics | xtrack=-0.25m head_err=-0.0deg sideslip=1.2deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:41:36Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:37Z] FALCON metrics | xtrack=-0.27m head_err=-0.0deg sideslip=0.5deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:41:39Z] FALCON metrics | xtrack=-0.30m head_err=-0.0deg sideslip=0.2deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:41:39Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.83, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:41Z] FALCON metrics | xtrack=-0.31m head_err=-0.0deg sideslip=1.0deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:41:42Z] FALCON metrics | xtrack=-0.26m head_err=0.1deg sideslip=-1.6deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:43Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.89, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:44Z] FALCON metrics | xtrack=-0.25m head_err=0.0deg sideslip=-0.1deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:45Z] FALCON metrics | xtrack=-0.24m head_err=-0.0deg sideslip=-0.1deg front_clear=1.90m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:41:47Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.89, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:47Z] FALCON metrics | xtrack=-0.25m head_err=-0.0deg sideslip=1.3deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:41:49Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=-0.5deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:50Z] FALCON metrics | xtrack=-0.16m head_err=0.0deg sideslip=-1.1deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:50Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.89, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:52Z] FALCON metrics | xtrack=-0.17m head_err=-0.0deg sideslip=0.8deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:53Z] FALCON metrics | xtrack=-0.21m head_err=-0.0deg sideslip=1.2deg front_clear=1.90m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:41:54Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.89, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:55Z] FALCON metrics | xtrack=-0.18m head_err=0.0deg sideslip=-0.6deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:57Z] FALCON metrics | xtrack=-0.17m head_err=-0.0deg sideslip=-0.1deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:41:58Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:41:58Z] FALCON metrics | xtrack=-0.18m head_err=-0.0deg sideslip=-0.3deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:00Z] FALCON metrics | xtrack=-0.18m head_err=-0.0deg sideslip=0.4deg front_clear=1.90m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:01Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.91, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:01Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=0.4deg front_clear=1.91m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:03Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=-0.6deg front_clear=1.91m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:05Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=-0.6deg front_clear=1.90m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:05Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.90, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:06Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=0.6deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:42:08Z] FALCON metrics | xtrack=-0.19m head_err=-0.0deg sideslip=0.5deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:42:08Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:09Z] FALCON metrics | xtrack=-0.18m head_err=0.0deg sideslip=0.4deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:42:11Z] FALCON metrics | xtrack=-0.16m head_err=0.0deg sideslip=-0.7deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:12Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:13Z] FALCON metrics | xtrack=-0.17m head_err=-0.0deg sideslip=0.9deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:14Z] FALCON metrics | xtrack=-0.20m head_err=-0.1deg sideslip=1.5deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:16Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:16Z] FALCON metrics | xtrack=-0.18m head_err=0.0deg sideslip=-0.7deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:42:17Z] FALCON metrics | xtrack=-0.15m head_err=0.0deg sideslip=-0.8deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:42:19Z] FALCON metrics | xtrack=-0.14m head_err=-0.0deg sideslip=1.0deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:19Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.84, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:21Z] FALCON metrics | xtrack=-0.16m head_err=-0.0deg sideslip=0.1deg front_clear=1.80m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:22Z] FALCON metrics | xtrack=-0.19m head_err=-0.0deg sideslip=0.5deg front_clear=1.80m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:23Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.78, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:24Z] FALCON metrics | xtrack=-0.19m head_err=-0.0deg sideslip=0.0deg front_clear=1.76m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:25Z] FALCON metrics | xtrack=-0.19m head_err=-0.0deg sideslip=0.7deg front_clear=1.74m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:26Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.74, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:27Z] FALCON metrics | xtrack=-0.16m head_err=0.1deg sideslip=-1.7deg front_clear=1.75m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:29Z] FALCON metrics | xtrack=-0.19m head_err=-0.0deg sideslip=1.0deg front_clear=1.78m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:30Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.77, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:30Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=1.1deg front_clear=1.77m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:32Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=-0.3deg front_clear=1.78m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:42:33Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=0.4deg front_clear=1.78m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:34Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.78, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:35Z] FALCON metrics | xtrack=-0.17m head_err=0.0deg sideslip=-1.5deg front_clear=1.77m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:37Z] FALCON metrics | xtrack=-0.18m head_err=-0.0deg sideslip=0.7deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:37Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.79, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:38Z] FALCON metrics | xtrack=-0.17m head_err=0.0deg sideslip=-0.4deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:40Z] FALCON metrics | xtrack=-0.24m head_err=-0.1deg sideslip=1.4deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:42:41Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.79, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:41Z] FALCON metrics | xtrack=-0.24m head_err=-0.0deg sideslip=-0.1deg front_clear=1.80m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:43Z] FALCON metrics | xtrack=-0.24m head_err=0.0deg sideslip=-0.7deg front_clear=1.78m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:45Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.78, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:45Z] FALCON metrics | xtrack=-0.23m head_err=-0.0deg sideslip=0.4deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:42:46Z] FALCON metrics | xtrack=-0.25m head_err=-0.0deg sideslip=0.5deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:48Z] FALCON metrics | xtrack=-0.27m head_err=0.0deg sideslip=-0.5deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:48Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.79, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:50Z] FALCON metrics | xtrack=-0.26m head_err=0.0deg sideslip=-0.3deg front_clear=1.78m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:42:51Z] FALCON metrics | xtrack=-0.24m head_err=0.0deg sideslip=-0.7deg front_clear=1.79m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:42:52Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.81, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:53Z] FALCON metrics | xtrack=-0.22m head_err=0.0deg sideslip=-0.6deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:42:54Z] FALCON metrics | xtrack=-0.24m head_err=-0.0deg sideslip=0.4deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:55Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.82, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:56Z] FALCON metrics | xtrack=-0.24m head_err=-0.0deg sideslip=0.0deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:58Z] FALCON metrics | xtrack=-0.25m head_err=-0.0deg sideslip=0.4deg front_clear=1.83m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:42:59Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.81, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:42:59Z] FALCON metrics | xtrack=-0.24m head_err=0.0deg sideslip=-0.7deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:01Z] FALCON metrics | xtrack=-0.23m head_err=0.0deg sideslip=-0.9deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:02Z] FALCON metrics | xtrack=-0.26m head_err=-0.1deg sideslip=1.1deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:43:03Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.82, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:04Z] FALCON metrics | xtrack=-0.30m head_err=0.0deg sideslip=0.2deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:06Z] FALCON metrics | xtrack=-0.30m head_err=-0.0deg sideslip=0.1deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:06Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:07Z] FALCON metrics | xtrack=-0.31m head_err=0.0deg sideslip=-0.3deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:09Z] FALCON metrics | xtrack=-0.31m head_err=-0.0deg sideslip=-0.1deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:43:10Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:10Z] FALCON metrics | xtrack=-0.31m head_err=0.0deg sideslip=0.1deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:12Z] FALCON metrics | xtrack=-0.30m head_err=0.0deg sideslip=-1.0deg front_clear=1.81m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:43:13Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.82, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:14Z] FALCON metrics | xtrack=-0.26m head_err=0.0deg sideslip=-1.1deg front_clear=1.82m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:15Z] FALCON metrics | xtrack=-0.26m head_err=-0.1deg sideslip=0.2deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:43:17Z] FALCON metrics | xtrack=-0.30m head_err=0.0deg sideslip=0.1deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:17Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.88, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:18Z] FALCON metrics | xtrack=-0.32m head_err=-0.1deg sideslip=1.4deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:20Z] FALCON metrics | xtrack=-0.31m head_err=0.0deg sideslip=-0.8deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:21Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:22Z] FALCON metrics | xtrack=-0.31m head_err=0.0deg sideslip=-0.6deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:43:23Z] FALCON metrics | xtrack=-0.30m head_err=0.0deg sideslip=-0.5deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:24Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:25Z] FALCON metrics | xtrack=-0.30m head_err=0.0deg sideslip=-0.8deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:26Z] FALCON metrics | xtrack=-0.33m head_err=-0.1deg sideslip=1.4deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:28Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:28Z] FALCON metrics | xtrack=-0.30m head_err=0.0deg sideslip=-0.9deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:43:30Z] FALCON metrics | xtrack=-0.33m head_err=-0.1deg sideslip=1.5deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:31Z] FALCON metrics | xtrack=-0.33m head_err=-0.1deg sideslip=1.3deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:31Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.88, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:33Z] FALCON metrics | xtrack=-0.35m head_err=0.0deg sideslip=-0.4deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:34Z] FALCON metrics | xtrack=-0.31m head_err=0.0deg sideslip=-0.9deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:43:35Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.89, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:36Z] FALCON metrics | xtrack=-0.31m head_err=-0.0deg sideslip=0.3deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:38Z] FALCON metrics | xtrack=-0.31m head_err=-0.0deg sideslip=0.6deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:39Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:39Z] FALCON metrics | xtrack=-0.29m head_err=0.0deg sideslip=-0.9deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:41Z] FALCON metrics | xtrack=-0.30m head_err=-0.0deg sideslip=1.5deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:42Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.89, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:42Z] FALCON metrics | xtrack=-0.31m head_err=0.0deg sideslip=-0.1deg front_clear=1.90m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:44Z] FALCON metrics | xtrack=-0.30m head_err=0.1deg sideslip=-1.9deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:46Z] FALCON metrics | xtrack=-0.29m head_err=-0.0deg sideslip=0.0deg front_clear=1.91m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:46Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.90, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:47Z] FALCON metrics | xtrack=-0.30m head_err=-0.0deg sideslip=0.6deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:49Z] FALCON metrics | xtrack=-0.29m head_err=0.0deg sideslip=-1.4deg front_clear=1.84m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:43:50Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.83, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:51Z] FALCON metrics | xtrack=-0.28m head_err=0.0deg sideslip=-0.7deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:43:52Z] FALCON metrics | xtrack=-0.27m head_err=-0.1deg sideslip=1.3deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:43:53Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:54Z] FALCON metrics | xtrack=-0.28m head_err=-0.0deg sideslip=-0.1deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:55Z] FALCON metrics | xtrack=-0.29m head_err=0.0deg sideslip=0.1deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:57Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.85, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:43:57Z] FALCON metrics | xtrack=-0.27m head_err=0.0deg sideslip=-0.3deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:43:59Z] FALCON metrics | xtrack=-0.25m head_err=0.0deg sideslip=-1.1deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:00Z] FALCON metrics | xtrack=-0.25m head_err=-0.0deg sideslip=-0.1deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:00Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:02Z] FALCON metrics | xtrack=-0.25m head_err=0.0deg sideslip=0.0deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:03Z] FALCON metrics | xtrack=-0.26m head_err=-0.0deg sideslip=0.8deg front_clear=1.88m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:04Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:05Z] FALCON metrics | xtrack=-0.25m head_err=-0.0deg sideslip=0.6deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:07Z] FALCON metrics | xtrack=-0.23m head_err=0.0deg sideslip=0.1deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:08Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.87, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:08Z] FALCON metrics | xtrack=-0.26m head_err=-0.0deg sideslip=1.3deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:44:10Z] FALCON metrics | xtrack=-0.23m head_err=-0.0deg sideslip=0.8deg front_clear=1.85m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:11Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.86, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:11Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=-0.5deg front_clear=1.86m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:13Z] FALCON metrics | xtrack=-0.23m head_err=-0.0deg sideslip=1.6deg front_clear=1.87m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:15Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=0.1deg front_clear=1.89m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:15Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.90, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:16Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=-0.3deg front_clear=1.91m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:18Z] FALCON metrics | xtrack=-0.24m head_err=-0.0deg sideslip=0.9deg front_clear=1.92m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:18Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.91, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:19Z] FALCON metrics | xtrack=-0.22m head_err=0.0deg sideslip=0.4deg front_clear=1.92m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:21Z] FALCON metrics | xtrack=-0.17m head_err=0.1deg sideslip=-1.4deg front_clear=1.92m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:22Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.91, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:23Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=0.5deg front_clear=1.91m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:24Z] FALCON metrics | xtrack=-0.17m head_err=0.0deg sideslip=-0.9deg front_clear=1.92m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:26Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.93, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:26Z] FALCON metrics | xtrack=-0.18m head_err=0.0deg sideslip=-0.2deg front_clear=1.93m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:27Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=0.0deg front_clear=1.92m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:29Z] FALCON metrics | xtrack=-0.21m head_err=-0.0deg sideslip=0.4deg front_clear=1.95m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:44:29Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.96, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:31Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=0.1deg front_clear=1.97m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:32Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=-0.4deg front_clear=1.97m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:33Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.96, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:34Z] FALCON metrics | xtrack=-0.18m head_err=-0.0deg sideslip=-0.0deg front_clear=1.95m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:35Z] FALCON metrics | xtrack=-0.18m head_err=-0.0deg sideslip=0.7deg front_clear=1.95m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:36Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.95, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:37Z] FALCON metrics | xtrack=-0.15m head_err=0.0deg sideslip=-1.1deg front_clear=1.95m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:39Z] FALCON metrics | xtrack=-0.13m head_err=-0.0deg sideslip=0.6deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:44:40Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.99, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:40Z] FALCON metrics | xtrack=-0.11m head_err=0.0deg sideslip=-0.3deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:42Z] FALCON metrics | xtrack=-0.10m head_err=0.0deg sideslip=-0.7deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:44:43Z] FALCON metrics | xtrack=-0.11m head_err=-0.0deg sideslip=1.0deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:44:44Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.99, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:45Z] FALCON metrics | xtrack=-0.11m head_err=0.0deg sideslip=-1.0deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:44:47Z] FALCON metrics | xtrack=-0.11m head_err=0.0deg sideslip=-0.8deg front_clear=2.00m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:47Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.01, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:48Z] FALCON metrics | xtrack=-0.12m head_err=-0.0deg sideslip=1.2deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:50Z] FALCON metrics | xtrack=-0.11m head_err=0.0deg sideslip=-0.3deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:44:51Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.99, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:52Z] FALCON metrics | xtrack=-0.12m head_err=-0.0deg sideslip=0.2deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:53Z] FALCON metrics | xtrack=-0.12m head_err=-0.0deg sideslip=1.2deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:44:55Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.02, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:44:55Z] FALCON metrics | xtrack=-0.12m head_err=0.0deg sideslip=-0.0deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:56Z] FALCON metrics | xtrack=-0.09m head_err=-0.0deg sideslip=-0.1deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:44:58Z] FALCON metrics | xtrack=-0.07m head_err=0.0deg sideslip=0.2deg front_clear=1.97m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:44:58Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.97, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:00Z] FALCON metrics | xtrack=-0.06m head_err=0.0deg sideslip=-0.1deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:45:01Z] FALCON metrics | xtrack=-0.05m head_err=0.0deg sideslip=-0.2deg front_clear=2.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:45:02Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.01, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:03Z] FALCON metrics | xtrack=-0.07m head_err=-0.0deg sideslip=0.5deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:45:04Z] FALCON metrics | xtrack=-0.08m head_err=-0.0deg sideslip=0.5deg front_clear=1.97m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:45:05Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.95, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:06Z] FALCON metrics | xtrack=-0.08m head_err=-0.0deg sideslip=0.2deg front_clear=1.95m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:08Z] FALCON metrics | xtrack=-0.09m head_err=-0.0deg sideslip=0.6deg front_clear=1.96m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:45:09Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.97, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:09Z] FALCON metrics | xtrack=-0.09m head_err=-0.0deg sideslip=-0.0deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:11Z] FALCON metrics | xtrack=-0.06m head_err=0.0deg sideslip=-0.6deg front_clear=2.00m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:45:12Z] FALCON metrics | xtrack=-0.03m head_err=0.0deg sideslip=-1.1deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:13Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.01, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:14Z] FALCON metrics | xtrack=-0.08m head_err=-0.0deg sideslip=0.7deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:16Z] FALCON metrics | xtrack=-0.08m head_err=0.0deg sideslip=-1.0deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:45:16Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.97, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:17Z] FALCON metrics | xtrack=-0.10m head_err=-0.0deg sideslip=-0.2deg front_clear=1.96m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:19Z] FALCON metrics | xtrack=-0.11m head_err=-0.1deg sideslip=0.9deg front_clear=1.96m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:45:20Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.96, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:20Z] FALCON metrics | xtrack=-0.09m head_err=0.0deg sideslip=-0.9deg front_clear=1.97m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:45:22Z] FALCON metrics | xtrack=-0.12m head_err=-0.1deg sideslip=1.4deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:45:23Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.01, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:24Z] FALCON metrics | xtrack=-0.15m head_err=-0.0deg sideslip=0.2deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:45:25Z] FALCON metrics | xtrack=-0.14m head_err=0.0deg sideslip=-0.4deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:45:27Z] FALCON metrics | xtrack=-0.16m head_err=-0.0deg sideslip=0.3deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:27Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.99, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:28Z] FALCON metrics | xtrack=-0.16m head_err=0.0deg sideslip=-0.6deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:45:30Z] FALCON metrics | xtrack=-0.17m head_err=-0.0deg sideslip=0.1deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:45:31Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.01, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:32Z] FALCON metrics | xtrack=-0.17m head_err=0.0deg sideslip=-0.2deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:33Z] FALCON metrics | xtrack=-0.18m head_err=-0.0deg sideslip=0.2deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:45:34Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.98, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:35Z] FALCON metrics | xtrack=-0.17m head_err=0.0deg sideslip=-0.6deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:36Z] FALCON metrics | xtrack=-0.20m head_err=-0.1deg sideslip=1.7deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:38Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.00, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:38Z] FALCON metrics | xtrack=-0.23m head_err=-0.0deg sideslip=0.2deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:45:40Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=-1.1deg front_clear=1.97m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:41Z] FALCON metrics | xtrack=-0.22m head_err=0.0deg sideslip=0.2deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:45:41Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.98, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:43Z] FALCON metrics | xtrack=-0.20m head_err=0.0deg sideslip=-0.8deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:44Z] FALCON metrics | xtrack=-0.18m head_err=0.0deg sideslip=-1.1deg front_clear=1.96m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:45:45Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.94, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:46Z] FALCON metrics | xtrack=-0.19m head_err=-0.0deg sideslip=0.7deg front_clear=1.95m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:48Z] FALCON metrics | xtrack=-0.20m head_err=0.0deg sideslip=0.1deg front_clear=1.96m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:45:49Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.98, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:49Z] FALCON metrics | xtrack=-0.17m head_err=0.0deg sideslip=-0.3deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:51Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=0.9deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:52Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.99, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:53Z] FALCON metrics | xtrack=-0.20m head_err=0.0deg sideslip=-0.9deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:45:54Z] FALCON metrics | xtrack=-0.19m head_err=-0.0deg sideslip=-0.1deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:56Z] FALCON metrics | xtrack=-0.18m head_err=0.0deg sideslip=-0.0deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:45:56Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.99, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:45:57Z] FALCON metrics | xtrack=-0.19m head_err=-0.0deg sideslip=-0.3deg front_clear=1.96m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:45:59Z] FALCON metrics | xtrack=-0.19m head_err=-0.1deg sideslip=1.1deg front_clear=1.96m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:00Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.96, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:01Z] FALCON metrics | xtrack=-0.20m head_err=0.0deg sideslip=-0.1deg front_clear=1.94m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:02Z] FALCON metrics | xtrack=-0.19m head_err=-0.0deg sideslip=0.0deg front_clear=1.96m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:03Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.95, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:04Z] FALCON metrics | xtrack=-0.16m head_err=0.0deg sideslip=-1.2deg front_clear=1.95m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:05Z] FALCON metrics | xtrack=-0.21m head_err=-0.1deg sideslip=2.0deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:07Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.98, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:07Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=-0.7deg front_clear=1.98m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:09Z] FALCON metrics | xtrack=-0.17m head_err=0.0deg sideslip=-0.7deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:10Z] FALCON metrics | xtrack=-0.19m head_err=-0.1deg sideslip=1.0deg front_clear=1.97m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:10Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.98, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:12Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=0.5deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:13Z] FALCON metrics | xtrack=-0.20m head_err=0.1deg sideslip=-1.4deg front_clear=2.00m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:14Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.00, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:15Z] FALCON metrics | xtrack=-0.19m head_err=-0.1deg sideslip=0.8deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:17Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=0.4deg front_clear=2.04m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:18Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.06, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:18Z] FALCON metrics | xtrack=-0.20m head_err=0.0deg sideslip=-0.9deg front_clear=2.06m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:20Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=-0.1deg front_clear=2.03m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:46:21Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.03, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:21Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=0.8deg front_clear=2.04m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:46:23Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=0.0deg front_clear=2.05m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:25Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=-0.5deg front_clear=2.06m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:25Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.06, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:26Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=-0.2deg front_clear=2.05m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:28Z] FALCON metrics | xtrack=-0.21m head_err=-0.0deg sideslip=-0.1deg front_clear=2.04m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:28Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.04, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:29Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=0.7deg front_clear=2.04m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:31Z] FALCON metrics | xtrack=-0.21m head_err=-0.0deg sideslip=0.3deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:46:32Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.00, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:33Z] FALCON metrics | xtrack=-0.22m head_err=0.0deg sideslip=-0.5deg front_clear=2.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:46:34Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=-0.2deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:36Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.01, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:36Z] FALCON metrics | xtrack=-0.21m head_err=-0.0deg sideslip=0.0deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:37Z] FALCON metrics | xtrack=-0.23m head_err=-0.0deg sideslip=1.5deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:39Z] FALCON metrics | xtrack=-0.23m head_err=0.0deg sideslip=-0.7deg front_clear=2.03m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:39Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.03, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:41Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=-0.3deg front_clear=2.03m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:42Z] FALCON metrics | xtrack=-0.23m head_err=0.0deg sideslip=0.4deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:46:43Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.01, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:44Z] FALCON metrics | xtrack=-0.21m head_err=-0.0deg sideslip=0.0deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:45Z] FALCON metrics | xtrack=-0.21m head_err=-0.0deg sideslip=1.3deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:46Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.00, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:47Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=1.0deg front_clear=1.99m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:49Z] FALCON metrics | xtrack=-0.20m head_err=0.0deg sideslip=-1.0deg front_clear=2.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:46:50Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.03, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:50Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=0.6deg front_clear=2.03m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:52Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=-0.2deg front_clear=2.00m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:54Z] FALCON metrics | xtrack=-0.20m head_err=0.0deg sideslip=-0.5deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:46:54Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.01, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:55Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=-0.3deg front_clear=2.02m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:46:57Z] FALCON metrics | xtrack=-0.17m head_err=-0.0deg sideslip=0.5deg front_clear=2.04m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:46:57Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.04, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:46:58Z] FALCON metrics | xtrack=-0.17m head_err=0.0deg sideslip=-0.7deg front_clear=2.04m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:47:00Z] FALCON metrics | xtrack=-0.15m head_err=0.0deg sideslip=-0.4deg front_clear=2.01m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:47:01Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.02, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:02Z] FALCON metrics | xtrack=-0.16m head_err=-0.0deg sideslip=0.3deg front_clear=2.03m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:03Z] FALCON metrics | xtrack=-0.22m head_err=-0.1deg sideslip=1.5deg front_clear=2.04m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:05Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.05, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:05Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=-1.0deg front_clear=2.06m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:47:06Z] FALCON metrics | xtrack=-0.24m head_err=-0.0deg sideslip=1.0deg front_clear=2.10m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:47:08Z] FALCON metrics | xtrack=-0.22m head_err=0.0deg sideslip=-0.3deg front_clear=2.08m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:47:08Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.08, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:10Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=0.1deg front_clear=2.08m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:11Z] FALCON metrics | xtrack=-0.22m head_err=0.0deg sideslip=0.1deg front_clear=2.07m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:47:12Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.07, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:13Z] FALCON metrics | xtrack=-0.23m head_err=0.0deg sideslip=-0.2deg front_clear=2.08m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:14Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=-0.7deg front_clear=2.08m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:47:15Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.08, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:16Z] FALCON metrics | xtrack=-0.18m head_err=-0.0deg sideslip=-0.0deg front_clear=2.09m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:18Z] FALCON metrics | xtrack=-0.18m head_err=0.0deg sideslip=-0.3deg front_clear=2.09m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:19Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.11, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:19Z] FALCON metrics | xtrack=-0.18m head_err=-0.0deg sideslip=0.0deg front_clear=2.11m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:21Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=1.1deg front_clear=2.09m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:47:22Z] FALCON metrics | xtrack=-0.17m head_err=0.0deg sideslip=-1.2deg front_clear=2.11m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:47:23Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.11, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:24Z] FALCON metrics | xtrack=-0.18m head_err=-0.0deg sideslip=0.9deg front_clear=2.11m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:26Z] FALCON metrics | xtrack=-0.18m head_err=0.0deg sideslip=-1.2deg front_clear=2.11m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:26Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.10, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:27Z] FALCON metrics | xtrack=-0.19m head_err=-0.1deg sideslip=1.2deg front_clear=2.10m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:29Z] FALCON metrics | xtrack=-0.21m head_err=0.0deg sideslip=0.2deg front_clear=2.09m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:47:30Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.08, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:30Z] FALCON metrics | xtrack=-0.25m head_err=-0.0deg sideslip=0.4deg front_clear=2.09m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:47:32Z] FALCON metrics | xtrack=-0.22m head_err=0.1deg sideslip=-2.0deg front_clear=2.09m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:47:33Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.09, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:34Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=-0.5deg front_clear=2.09m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:47:35Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=-0.1deg front_clear=2.12m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:47:37Z] FALCON metrics | xtrack=-0.26m head_err=-0.0deg sideslip=1.0deg front_clear=2.11m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:47:37Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=2.11, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:38Z] FALCON metrics | xtrack=-0.29m head_err=0.0deg sideslip=-0.3deg front_clear=2.12m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:40Z] FALCON metrics | xtrack=-0.27m head_err=0.0deg sideslip=-1.1deg front_clear=2.12m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:47:41Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=2.13, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:42Z] FALCON metrics | xtrack=-0.26m head_err=-0.0deg sideslip=-0.6deg front_clear=2.15m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:47:43Z] FALCON metrics | xtrack=-0.25m head_err=-0.0deg sideslip=0.4deg front_clear=1.90m geom_clear=14.00m tilt=0.0deg progress=0.21mps
+[2026-09-28T17:47:44Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.12, front=1.73, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:45Z] FALCON metrics | xtrack=-0.24m head_err=0.0deg sideslip=0.2deg front_clear=1.69m geom_clear=14.00m tilt=0.0deg progress=0.08mps
+[2026-09-28T17:47:46Z] FALCON metrics | xtrack=-0.21m head_err=0.1deg sideslip=-1.2deg front_clear=1.63m geom_clear=14.00m tilt=0.0deg progress=0.02mps
+[2026-09-28T17:47:48Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.62, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:48Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=-0.2deg front_clear=1.62m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:47:50Z] FALCON metrics | xtrack=-0.23m head_err=0.0deg sideslip=0.2deg front_clear=1.61m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:47:51Z] FALCON metrics | xtrack=-0.21m head_err=-0.0deg sideslip=0.4deg front_clear=1.60m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:47:52Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.00, front=1.59, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:53Z] FALCON metrics | xtrack=-0.20m head_err=0.0deg sideslip=-0.6deg front_clear=1.59m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:47:55Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=-0.5deg front_clear=1.56m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:47:55Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.57, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:56Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=0.4deg front_clear=1.58m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:47:58Z] FALCON metrics | xtrack=-0.22m head_err=-0.0deg sideslip=0.7deg front_clear=1.60m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:47:59Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.60, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:47:59Z] FALCON metrics | xtrack=-0.20m head_err=0.1deg sideslip=-1.5deg front_clear=1.61m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:48:01Z] FALCON metrics | xtrack=-0.20m head_err=-0.0deg sideslip=0.8deg front_clear=1.60m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:48:02Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.61, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:48:03Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=-0.7deg front_clear=1.61m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:48:03Z] --> Received Command: land
+Received ack for not-existing command: 176! Ignoring... (mavlink_command_sender.cpp:304)
+[2026-09-28T17:48:04Z] FALCON metrics | xtrack=-0.19m head_err=0.1deg sideslip=0.6deg front_clear=1.60m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T17:48:06Z] FALCON metrics | xtrack=-0.18m head_err=0.1deg sideslip=-0.0deg front_clear=1.61m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:48:06Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.61, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:48:07Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=0.8deg front_clear=1.60m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T17:48:09Z] FALCON metrics | xtrack=-0.19m head_err=0.1deg sideslip=-0.5deg front_clear=1.62m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T17:48:10Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.62, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:48:11Z] FALCON metrics | xtrack=-0.20m head_err=0.0deg sideslip=-0.6deg front_clear=1.59m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T17:48:12Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=-0.6deg front_clear=1.60m geom_clear=14.00m tilt=0.0deg progress=-0.03mps
+[2026-09-28T17:48:13Z] Stuck-hover escape -> replan current objective (3.4s stuck, speed=0.01, front=1.63, geom=14.00)
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T17:48:14Z] FALCON metrics | xtrack=-0.19m head_err=0.0deg sideslip=-1.6deg front_clear=1.64m geom_clear=14.00m tilt=0.0deg progress=0.02mps

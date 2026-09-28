@@ -1,0 +1,81 @@
+{
+  "dispatched_at_utc": "2026-09-28T17:38:00Z",
+  "payload": {
+    "drone_id": "x500_0",
+    "action": "mission_start",
+    "params": {
+      "waypoints": [
+        [
+          47.39819537981118,
+          8.5461637,
+          10.0
+        ],
+        [
+          47.39819537981118,
+          8.546495475941306,
+          10.0
+        ],
+        [
+          47.3979708,
+          8.546495475941306,
+          10.0
+        ],
+        [
+          47.3979708,
+          8.5461637,
+          10.0
+        ]
+      ],
+      "mission_type": "TRAINING"
+    },
+    "timestamp": "2026-09-28T17:38:00.178288+00:00"
+  },
+  "subscribers": 1,
+  "method": "Published directly on the Redis 'commands' channel in the format backend/app.py _publish_command uses, not through the backend API. The waypoints are the console's START TRAINING mission as frontend/src/components/DroneList.js builds it: a 25 m box at 10 m around the drone's position at dispatch.",
+  "outcome": "timeout",
+  "landed_below_0_5_m": true,
+  "bridge": {
+    "ref": "fix/offboard-engage",
+    "commit": "6a40f0fd28af9d10d6da428ea595348f895e23c9"
+  },
+  "gazebo_launch": {
+    "GZ_IP": "127.0.0.1",
+    "headless_rendering": false
+  },
+  "world": {
+    "source": "obstacles.sdf",
+    "source_sha256": "823d3ee90d85e3024b6614b5c82b7f8bd1ea0d316c4186738fd4035f4a5871df",
+    "references": {
+      "PX4-Autopilot/Tools/simulation/gz/worlds/default.sdf": "457a363a22c437b788a4aaf1e2335aa149efce4e5b988cdc108065663cd879b2",
+      "PX4-Autopilot/src/modules/simulation/gz_bridge/server.config": "60871c73e32ecde05e008aaf995e1b9c09906ca3dacb143c595522c68d399172"
+    },
+    "px4_version": "v1.17.0-alpha1-1447-g885fe14ee6",
+    "added_plugins": [
+      "gz-sim-air-speed-system",
+      "gz-sim-apply-link-wrench-system",
+      "gz-sim-navsat-system",
+      "gz-sim-magnetometer-system"
+    ],
+    "skipped_px4_custom_plugins": [
+      "libOpticalFlowSystem.so",
+      "libGstCameraSystem.so"
+    ],
+    "added_spherical_coordinates": true,
+    "added_xml": [
+      "    <plugin filename=\"gz-sim-air-speed-system\" name=\"gz::sim::systems::AirSpeed\" />",
+      "    <plugin filename=\"gz-sim-apply-link-wrench-system\" name=\"gz::sim::systems::ApplyLinkWrench\" />",
+      "    <plugin filename=\"gz-sim-navsat-system\" name=\"gz::sim::systems::NavSat\" />",
+      "    <plugin filename=\"gz-sim-magnetometer-system\" name=\"gz::sim::systems::Magnetometer\" />",
+      "    <spherical_coordinates>\n      <surface_model>EARTH_WGS84</surface_model>\n      <world_frame_orientation>ENU</world_frame_orientation>\n      <latitude_deg>47.397971057728974</latitude_deg>\n      <longitude_deg> 8.546163739800146</longitude_deg>\n      <elevation>0</elevation>\n    </spherical_coordinates>"
+    ],
+    "used_file": "world_used.sdf",
+    "used_sha256": "9340b64c4b4cea09652d08d8de6263c8c3bdc0d28788a884ad0cd0b2d2e36f3b"
+  },
+  "teacher_log_lines_since_dispatch": [
+    "[2026-09-28T17:38:00Z] --> Received Command: mission_start",
+    "[2026-09-28T17:38:03Z] --> External mission armed; awaiting climb to 10.0m",
+    "[2026-09-28T17:38:13Z] --> External mission navigation engaged for waypoint 1",
+    "[2026-09-28T17:38:33Z] --> External mission advanced to waypoint 2/4",
+    "[2026-09-28T17:48:03Z] --> Received Command: land"
+  ]
+}
