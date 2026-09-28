@@ -11,16 +11,18 @@ ORCH_URL="${ORCH_URL:-http://127.0.0.1:8765/health}"
 
 # Storage plan: keep long-lived datasets + proof artifacts on the J: SSD mount.
 # This avoids growing the WSL distro disk (often hosted on C:) during long collection runs.
-LESNAR_DATA_ROOT="${LESNAR_DATA_ROOT:-/mnt/j/LesnarData}"
+# /mnt/j exists only under WSL; on plain Linux the same layout lives in the home directory.
+if [[ -d /mnt/j ]]; then STORE_BASE=/mnt/j; else STORE_BASE="$HOME"; fi
+LESNAR_DATA_ROOT="${LESNAR_DATA_ROOT:-$STORE_BASE/LesnarData}"
 LESNAR_ARCHIVE_ROOT="${LESNAR_ARCHIVE_ROOT:-}"
-LESNAR_AUDIT_CHAIN_FILE="${LESNAR_AUDIT_CHAIN_FILE:-/mnt/j/LesnarArchive/audit_chain.jsonl}"
+LESNAR_AUDIT_CHAIN_FILE="${LESNAR_AUDIT_CHAIN_FILE:-$STORE_BASE/LesnarArchive/audit_chain.jsonl}"
 
 cd "$REPO_DIR"
 
 docker compose up -d --build backend redis timescaledb adminer
 
 pkill -f "scripts/runtime_orchestrator.py" 2>/dev/null || true
-mkdir -p "$LESNAR_DATA_ROOT" "/mnt/j/LesnarArchive" 2>/dev/null || true
+mkdir -p "$LESNAR_DATA_ROOT" "$(dirname "$LESNAR_AUDIT_CHAIN_FILE")" 2>/dev/null || true
 
 export LESNAR_DATA_ROOT
 export LESNAR_ARCHIVE_ROOT

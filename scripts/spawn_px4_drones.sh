@@ -31,12 +31,16 @@ PX4_BIN="$BUILD_PATH/bin/px4"
 ETC_DIR="$BUILD_PATH/etc"
 
 # Provide PX4_GZ_MODELS/WORLDS + GZ_SIM_RESOURCE_PATH (what gz_env.sh normally does).
+# PX4's gz_env.sh appends to GZ_SIM_RESOURCE_PATH and GZ_SIM_SYSTEM_PLUGIN_PATH, which
+# set -u rejects when they are not already set.
+export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:-}" GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
 if [[ -f "$BUILD_PATH/rootfs/gz_env.sh" ]]; then
   # shellcheck disable=SC1090
   . "$BUILD_PATH/rootfs/gz_env.sh"
 fi
 # Keep the README's model path behavior as well.
 export GZ_SIM_RESOURCE_PATH="$GZ_SIM_RESOURCE_PATH:$PX4_DIR/Tools/simulation/gz/models"
+export GZ_IP="${GZ_IP:-127.0.0.1}"  # must match the world's transport (start_gz_world.sh)
 
 # Clean up any previous PX4 instances.
 killall -9 px4 2>/dev/null || true
