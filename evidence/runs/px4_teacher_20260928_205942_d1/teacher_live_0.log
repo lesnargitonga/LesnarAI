@@ -1,0 +1,116 @@
+[2026-09-28T17:59:57Z] Teacher script started
+[2026-09-28T17:59:57Z] --> Starting teacher (ONLINE)...
+Loading map from obstacles.sdf...
+Loaded 180 obstacles.
+[2026-09-28T17:59:57Z] --> Map loaded.
+Grid Size: 535x540, Bounds: x[-268.0,267.0] y[-270.0,270.0]
+Rasterizing obstacles...
+Computing clearance field...
+Clearance field ready.
+[2026-09-28T17:59:57Z] --> Grid ready.
+[2026-09-28T17:59:57Z] --> Redis connected (Bridge Established) at 127.0.0.1:6379
+[2026-09-28T17:59:57Z] --> Connecting to udpin://127.0.0.1:14540...
+[2026-09-28T17:59:58Z] --> Waiting for drone (timeout 30s)...
+[2026-09-28T17:59:58Z] --> Connected!
+[2026-09-28T17:59:58Z] --> PX4 param applied: COM_ARM_WO_GPS=1
+[2026-09-28T17:59:58Z] --> PX4 param applied: COM_DISARM_PRFLT=60.0
+[2026-09-28T17:59:58Z] --> PX4 param applied: COM_PREARM_MODE=0
+--> Control bridge mode active; awaiting app commands...
+[2026-09-28T18:00:00Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=2.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T18:00:01Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=3.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T18:00:03Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=2.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T18:00:05Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=-4.5deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.02mps
+[2026-09-28T18:00:06Z] FALCON metrics | xtrack=-0.00m head_err=0.0deg sideslip=-2.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T18:00:08Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=0.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T18:00:09Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=0.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T18:00:11Z] FALCON metrics | xtrack=-0.00m head_err=0.0deg sideslip=0.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T18:00:13Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=-0.5deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T18:00:14Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=0.7deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.01mps
+[2026-09-28T18:00:15Z] --> Received Command: mission_start
+[2026-09-28T18:00:17Z] --> External mission armed; awaiting climb to 10.0m
+[2026-09-28T18:00:17Z] FALCON metrics | xtrack=0.00m head_err=-166.3deg sideslip=1.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T18:00:19Z] FALCON metrics | xtrack=0.00m head_err=147.6deg sideslip=-1.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T18:00:20Z] FALCON metrics | xtrack=-0.00m head_err=-16.0deg sideslip=-2.1deg front_clear=20.00m geom_clear=14.00m tilt=0.2deg progress=-0.01mps
+[2026-09-28T18:00:22Z] FALCON metrics | xtrack=0.00m head_err=147.8deg sideslip=-0.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T18:00:24Z] FALCON metrics | xtrack=-0.00m head_err=-30.3deg sideslip=-0.1deg front_clear=20.00m geom_clear=14.00m tilt=0.5deg progress=0.00mps
+[2026-09-28T18:00:25Z] FALCON metrics | xtrack=0.00m head_err=165.1deg sideslip=-0.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T18:00:28Z] --> External mission navigation engaged for waypoint 1
+Planning A* to -0,25...
+Path found! 2 waypoints
+[2026-09-28T18:00:28Z] FALCON metrics | xtrack=0.99m head_err=96.7deg sideslip=3.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.02mps
+Received ack for not-existing command: 176! Ignoring... (mavlink_command_sender.cpp:304)
+[2026-09-28T18:00:29Z] FALCON metrics | xtrack=1.00m head_err=77.2deg sideslip=-1.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T18:00:31Z] FALCON metrics | xtrack=1.12m head_err=60.6deg sideslip=-1.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.03mps
+[2026-09-28T18:00:32Z] FALCON metrics | xtrack=1.22m head_err=44.3deg sideslip=-3.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.03mps
+[2026-09-28T18:00:34Z] FALCON metrics | xtrack=1.35m head_err=27.9deg sideslip=-3.3deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.09mps
+[2026-09-28T18:00:36Z] FALCON metrics | xtrack=1.49m head_err=11.1deg sideslip=-4.0deg front_clear=20.00m geom_clear=14.00m tilt=0.1deg progress=0.77mps
+[2026-09-28T18:00:37Z] FALCON metrics | xtrack=1.65m head_err=-0.6deg sideslip=-1.6deg front_clear=20.00m geom_clear=14.00m tilt=0.1deg progress=1.78mps
+[2026-09-28T18:00:39Z] FALCON metrics | xtrack=1.60m head_err=0.1deg sideslip=-0.7deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.85mps
+[2026-09-28T18:00:40Z] FALCON metrics | xtrack=1.56m head_err=0.3deg sideslip=-0.5deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.84mps
+[2026-09-28T18:00:42Z] FALCON metrics | xtrack=1.45m head_err=0.2deg sideslip=-0.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.83mps
+[2026-09-28T18:00:44Z] FALCON metrics | xtrack=1.27m head_err=0.4deg sideslip=-0.6deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.81mps
+[2026-09-28T18:00:45Z] FALCON metrics | xtrack=1.03m head_err=0.6deg sideslip=-0.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.81mps
+[2026-09-28T18:00:47Z] FALCON metrics | xtrack=0.71m head_err=0.9deg sideslip=-1.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.78mps
+[2026-09-28T18:00:48Z] --> External mission advanced to waypoint 2/4
+Planning A* to 25,25...
+Path found! 2 waypoints
+[2026-09-28T18:00:49Z] FALCON metrics | xtrack=-1.22m head_err=-96.4deg sideslip=-0.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.19mps
+[2026-09-28T18:00:50Z] FALCON metrics | xtrack=-1.67m head_err=-80.2deg sideslip=-0.7deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.00mps
+[2026-09-28T18:00:52Z] FALCON metrics | xtrack=-1.71m head_err=-63.6deg sideslip=-5.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.03mps
+[2026-09-28T18:00:53Z] FALCON metrics | xtrack=-1.72m head_err=-47.1deg sideslip=-6.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.04mps
+[2026-09-28T18:00:55Z] FALCON metrics | xtrack=-1.69m head_err=-31.1deg sideslip=-5.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.07mps
+[2026-09-28T18:00:57Z] FALCON metrics | xtrack=-1.74m head_err=-15.1deg sideslip=-1.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.30mps
+[2026-09-28T18:00:58Z] FALCON metrics | xtrack=-2.04m head_err=0.5deg sideslip=5.8deg front_clear=20.00m geom_clear=14.00m tilt=0.1deg progress=1.66mps
+[2026-09-28T18:01:00Z] FALCON metrics | xtrack=-2.06m head_err=-0.5deg sideslip=-0.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.84mps
+[2026-09-28T18:01:01Z] FALCON metrics | xtrack=-1.99m head_err=-0.4deg sideslip=0.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.86mps
+[2026-09-28T18:01:03Z] FALCON metrics | xtrack=-1.84m head_err=-0.4deg sideslip=0.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.84mps
+[2026-09-28T18:01:05Z] FALCON metrics | xtrack=-1.64m head_err=-0.5deg sideslip=0.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.82mps
+[2026-09-28T18:01:06Z] FALCON metrics | xtrack=-1.37m head_err=-0.6deg sideslip=0.5deg front_clear=17.80m geom_clear=14.00m tilt=0.0deg progress=1.81mps
+[2026-09-28T18:01:08Z] FALCON metrics | xtrack=-1.03m head_err=-1.6deg sideslip=0.9deg front_clear=15.59m geom_clear=12.86m tilt=0.0deg progress=1.79mps
+[2026-09-28T18:01:09Z] FALCON metrics | xtrack=-0.52m head_err=-3.3deg sideslip=3.3deg front_clear=12.03m geom_clear=10.03m tilt=0.0deg progress=1.75mps
+[2026-09-28T18:01:10Z] --> External mission advanced to waypoint 3/4
+Planning A* to 25,-0...
+Path found! 2 waypoints
+[2026-09-28T18:01:11Z] FALCON metrics | xtrack=-1.52m head_err=-74.4deg sideslip=0.6deg front_clear=11.41m geom_clear=8.31m tilt=0.0deg progress=0.09mps
+[2026-09-28T18:01:13Z] FALCON metrics | xtrack=-1.60m head_err=-58.4deg sideslip=-6.7deg front_clear=12.28m geom_clear=8.23m tilt=0.0deg progress=0.04mps
+[2026-09-28T18:01:14Z] FALCON metrics | xtrack=-1.60m head_err=-42.3deg sideslip=-9.1deg front_clear=14.82m geom_clear=8.22m tilt=0.0deg progress=0.06mps
+[2026-09-28T18:01:16Z] FALCON metrics | xtrack=-1.58m head_err=-24.2deg sideslip=-6.8deg front_clear=19.26m geom_clear=8.97m tilt=0.0deg progress=0.12mps
+[2026-09-28T18:01:17Z] FALCON metrics | xtrack=-1.59m head_err=1.3deg sideslip=2.6deg front_clear=19.95m geom_clear=14.00m tilt=0.0deg progress=1.41mps
+[2026-09-28T18:01:19Z] FALCON metrics | xtrack=-1.56m head_err=-0.3deg sideslip=-0.3deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.85mps
+[2026-09-28T18:01:21Z] FALCON metrics | xtrack=-1.48m head_err=-0.3deg sideslip=-0.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.86mps
+[2026-09-28T18:01:22Z] FALCON metrics | xtrack=-1.39m head_err=-0.3deg sideslip=-0.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.85mps
+[2026-09-28T18:01:24Z] FALCON metrics | xtrack=-1.24m head_err=-0.3deg sideslip=-0.1deg front_clear=16.93m geom_clear=14.00m tilt=0.0deg progress=1.84mps
+[2026-09-28T18:01:25Z] FALCON metrics | xtrack=-1.04m head_err=-2.0deg sideslip=1.5deg front_clear=14.05m geom_clear=11.91m tilt=0.0deg progress=1.79mps
+[2026-09-28T18:01:27Z] FALCON metrics | xtrack=-0.69m head_err=-1.5deg sideslip=2.0deg front_clear=11.74m geom_clear=9.08m tilt=0.0deg progress=1.78mps
+[2026-09-28T18:01:29Z] FALCON metrics | xtrack=-0.09m head_err=0.5deg sideslip=0.8deg front_clear=19.44m geom_clear=6.33m tilt=0.0deg progress=1.75mps
+[2026-09-28T18:01:30Z] --> External mission advanced to waypoint 4/4
+Planning A* to -0,-0...
+Path found! 2 waypoints
+[2026-09-28T18:01:30Z] FALCON metrics | xtrack=-0.21m head_err=-85.7deg sideslip=-5.2deg front_clear=19.94m geom_clear=3.96m tilt=0.0deg progress=0.27mps
+[2026-09-28T18:01:32Z] FALCON metrics | xtrack=-0.62m head_err=-68.2deg sideslip=-4.7deg front_clear=20.00m geom_clear=3.62m tilt=0.0deg progress=0.03mps
+[2026-09-28T18:01:33Z] Stuck-hover escape -> replan current objective (2.0s stuck, speed=0.03, front=20.00, geom=3.59)
+Planning A* to -0,-0...
+Path found! 2 waypoints
+[2026-09-28T18:01:33Z] FALCON metrics | xtrack=0.34m head_err=-53.8deg sideslip=-4.6deg front_clear=20.00m geom_clear=3.56m tilt=0.0deg progress=0.03mps
+[2026-09-28T18:01:35Z] FALCON metrics | xtrack=0.28m head_err=-36.1deg sideslip=-6.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.07mps
+[2026-09-28T18:01:37Z] FALCON metrics | xtrack=0.28m head_err=-19.9deg sideslip=-6.6deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=0.10mps
+[2026-09-28T18:01:38Z] FALCON metrics | xtrack=0.08m head_err=-4.0deg sideslip=4.8deg front_clear=20.00m geom_clear=14.00m tilt=0.1deg progress=1.43mps
+[2026-09-28T18:01:40Z] FALCON metrics | xtrack=-0.06m head_err=-0.4deg sideslip=-1.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.85mps
+[2026-09-28T18:01:41Z] FALCON metrics | xtrack=-0.02m head_err=-0.0deg sideslip=-0.7deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.87mps
+[2026-09-28T18:01:43Z] FALCON metrics | xtrack=0.00m head_err=-0.0deg sideslip=-0.3deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.85mps
+[2026-09-28T18:01:45Z] FALCON metrics | xtrack=0.02m head_err=0.0deg sideslip=-0.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.84mps
+[2026-09-28T18:01:46Z] FALCON metrics | xtrack=0.02m head_err=0.0deg sideslip=-0.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.83mps
+[2026-09-28T18:01:48Z] FALCON metrics | xtrack=0.02m head_err=-0.0deg sideslip=-0.1deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.82mps
+[2026-09-28T18:01:50Z] FALCON metrics | xtrack=0.08m head_err=1.0deg sideslip=-1.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=1.80mps
+[2026-09-28T18:01:50Z] --> External mission completed
+[2026-09-28T18:01:51Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=0.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.86mps
+[2026-09-28T18:01:52Z] --> Received Command: land
+Received ack for not-existing command: 176! Ignoring... (mavlink_command_sender.cpp:304)
+[2026-09-28T18:01:53Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=0.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.52mps
+[2026-09-28T18:01:54Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=1.0deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.07mps
+[2026-09-28T18:01:56Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=2.3deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T18:01:58Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=6.7deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.04mps
+[2026-09-28T18:01:59Z] FALCON metrics | xtrack=-0.00m head_err=0.0deg sideslip=-1.3deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T18:02:01Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=1.2deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.01mps
+[2026-09-28T18:02:02Z] FALCON metrics | xtrack=0.00m head_err=0.0deg sideslip=0.8deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.00mps
+[2026-09-28T18:02:04Z] FALCON metrics | xtrack=-0.00m head_err=0.0deg sideslip=0.4deg front_clear=20.00m geom_clear=14.00m tilt=0.0deg progress=-0.03mps
