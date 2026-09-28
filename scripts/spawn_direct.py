@@ -2,9 +2,11 @@
 """
 Direct drone spawn - bypasses PX4's gz_bridge timeout issues
 """
+import os
 import subprocess
 import time
 import sys
+
 
 def run_cmd(cmd, check=True):
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -12,6 +14,7 @@ def run_cmd(cmd, check=True):
         print(f"Error: {result.stderr}")
         return False
     return result.stdout
+
 
 # Step 1: Start Gazebo with obstacles world (no PX4 yet)
 print("Starting Gazebo...")
@@ -39,7 +42,7 @@ with open(px4_x500_sdf) as f:
     sdf_content = f.read()
 
 # Create spawn request
-spawn_req =f'''
+spawn_req = f'''
 sdf: "{sdf_content.replace('"', '\\"').replace(chr(10), ' ')}"
 name: "x500_0"
 pose {{
@@ -61,7 +64,6 @@ else:
 
 # Step 3: Now start PX4 to connect to existing drone
 print("Starting PX4 autopilot...")
-import os
 os.chdir(os.path.expanduser('~/PX4-Autopilot'))
 os.environ['PX4_GZ_MODEL_NAME'] = 'x500_0'
 os.environ['PX4_GZ_WORLD'] = 'obstacles'

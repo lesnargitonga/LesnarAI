@@ -1,0 +1,6 @@
+[flake8]
+# backend/app.py must set ENGINEIO_ASYNC_MODE before importing flask_socketio, and add
+# drone_simulation to sys.path before importing the simulator, so imports there follow
+# code on purpose.
+per-file-ignores =
+    backend/app.py:E402

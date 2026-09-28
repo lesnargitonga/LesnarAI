@@ -1,12 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Brain,
-  Crosshair,
   Shuffle,
-  Eye,
   BarChart3,
-  Play,
-  Square,
   RefreshCw,
   AlertTriangle,
   CheckCircle,

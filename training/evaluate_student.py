@@ -99,7 +99,6 @@ def evaluate_model(model_path: str, csv_paths: list[Path], batch_size: int = 512
         raise ValueError("No valid evaluation rows found")
 
     X_t = torch.tensor(X, dtype=torch.float32)
-    Y_t = torch.tensor(Y_teacher, dtype=torch.float32)
 
     # Batch inference on GPU
     preds = []

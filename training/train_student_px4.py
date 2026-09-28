@@ -22,10 +22,10 @@ ENRICHED_SCALAR_KEYS = [
     # yaw is encoded as sin/cos → 2
     "front_lidar_min",  # 1
     "cross_track_m",    # 1
-    "heading_error_deg",# 1
+    "heading_error_deg",  # 1
     "sideslip_deg",     # 1
     "progress_mps",     # 1
-    "geom_clearance_m", # 1
+    "geom_clearance_m",  # 1
     "geom_threat",      # 1
     "tilt_target_deg",  # 1
     "roll_deg",         # 1
@@ -33,8 +33,8 @@ ENRICHED_SCALAR_KEYS = [
     "roll_rate_dps",    # 1
     "pitch_rate_dps",   # 1
     "yaw_rate_dps",     # 1
-    "ground_speed_mps", # 1
-    "distance_to_goal_m", # 1
+    "ground_speed_mps",  # 1
+    "distance_to_goal_m",  # 1
     "wind_north_mps",   # 1
     "wind_east_mps",    # 1
 ]
