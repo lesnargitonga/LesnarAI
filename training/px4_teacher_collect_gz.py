@@ -288,7 +288,7 @@ def map_yaw_to_heading(yaw_deg: float) -> float:
     return wrap_deg(90.0 - yaw_deg)
 
 class Obstacle:
-    def __init__(self, x, y, radius, height, is_box=False, dx=0, dy=0):
+    def __init__(self, x, y, radius, height, is_box=False, dx=0, dy=0, yaw=0.0):
         self.x = x
         self.y = y
         self.radius = radius  # For cylinder
@@ -296,16 +296,23 @@ class Obstacle:
         self.is_box = is_box
         self.dx = dx  # For box
         self.dy = dy  # For box
+        self.yaw = yaw  # For box: rotation about z in radians (SDF pose yaw)
+        self._cos = math.cos(yaw)
+        self._sin = math.sin(yaw)
+
+    def _to_local(self, px, py):
+        # World point into the box's own frame (x along dx, y along dy).
+        tx, ty = px - self.x, py - self.y
+        return tx * self._cos + ty * self._sin, -tx * self._sin + ty * self._cos
 
     def distance_to_point(self, px, py):
         if not self.is_box:
             dist = math.sqrt((px - self.x) ** 2 + (py - self.y) ** 2) - self.radius
             return max(0.0, dist)
         else:
-            tx = abs(px - self.x)
-            ty = abs(py - self.y)
-            dx = max(tx - (self.dx / 2), 0)
-            dy = max(ty - (self.dy / 2), 0)
+            lx, ly = self._to_local(px, py)
+            dx = max(abs(lx) - (self.dx / 2), 0)
+            dy = max(abs(ly) - (self.dy / 2), 0)
             return math.sqrt(dx * dx + dy * dy)
 
     def is_inside(self, px, py, margin=0.0):
@@ -313,9 +320,44 @@ class Obstacle:
             dist_sq = (px - self.x) ** 2 + (py - self.y) ** 2
             return dist_sq < (self.radius + margin) ** 2
         else:
+            lx, ly = self._to_local(px, py)
             half_x = (self.dx / 2) + margin
             half_y = (self.dy / 2) + margin
-            return (abs(px - self.x) < half_x) and (abs(py - self.y) < half_y)
+            return (abs(lx) < half_x) and (abs(ly) < half_y)
+
+    def ray_hit(self, px, py, rx, ry):
+        """Distance along the unit ray (rx, ry) from (px, py) to this obstacle's outline,
+        0 if the origin is inside, None if the ray misses."""
+        if not self.is_box:
+            ox, oy = self.x - px, self.y - py
+            along = ox * rx + oy * ry
+            perp_sq = (ox * ox + oy * oy) - along * along
+            r_sq = self.radius * self.radius
+            if perp_sq > r_sq:
+                return None
+            half_chord = math.sqrt(max(0.0, r_sq - perp_sq))
+            if along + half_chord < 0:
+                return None
+            return max(0.0, along - half_chord)
+        # Slab test in the box frame.
+        lx, ly = self._to_local(px, py)
+        lrx = rx * self._cos + ry * self._sin
+        lry = -rx * self._sin + ry * self._cos
+        t_near, t_far = -math.inf, math.inf
+        for o, d, half in ((lx, lrx, self.dx / 2), (ly, lry, self.dy / 2)):
+            if abs(d) < 1e-12:
+                if abs(o) > half:
+                    return None
+                continue
+            t1, t2 = (-half - o) / d, (half - o) / d
+            if t1 > t2:
+                t1, t2 = t2, t1
+            t_near, t_far = max(t_near, t1), min(t_far, t2)
+            if t_near > t_far:
+                return None
+        if t_far < 0:
+            return None
+        return max(0.0, t_near)
 
     def horizontal_size_m(self):
         if self.is_box:
@@ -354,7 +396,8 @@ class Map:
                 if geometry.find("box") is not None:
                     size_str = geometry.find("box").find("size").text
                     dims = [float(f) for f in size_str.split()]
-                    self.obstacles.append(Obstacle(mx, my, 0, dims[2], True, dims[0], dims[1]))
+                    yaw = parts[5] if len(parts) > 5 else 0.0
+                    self.obstacles.append(Obstacle(mx, my, 0, dims[2], True, dims[0], dims[1], yaw))
                 elif geometry.find("cylinder") is not None:
                     cyl = geometry.find("cylinder")
                     r = float(cyl.find("radius").text)
@@ -370,12 +413,11 @@ class Map:
         fov = 360.0
         angle_step = fov / num_rays
 
-        nearby = []
-        for obs in self.obstacles:
-            dist_center = math.sqrt((px - obs.x) ** 2 + (py - obs.y) ** 2)
-            max_dim = max(obs.dx, obs.dy) if obs.is_box else obs.radius * 2
-            if dist_center - (max_dim / 2) < max_dist:
-                nearby.append(obs)
+        # Exact ray intersection with each obstacle's real outline. This used to treat a
+        # box as a disc of radius max(dx, dy) / 2 and subtract that radius from the
+        # projected distance, so a 1 m x 38 m wall read as a 19 m disc, and grazing rays
+        # read 0 m.
+        nearby = [obs for obs in self.obstacles if obs.distance_to_point(px, py) < max_dist]
 
         yaw_rad = math.radians(yaw_deg)
 
@@ -388,17 +430,9 @@ class Map:
             min_hit = max_dist
 
             for obs in nearby:
-                ox = obs.x - px
-                oy = obs.y - py
-
-                dot = ox * rx + oy * ry
-                if dot > 0:
-                    cross = abs(ox * ry - oy * rx)
-                    size = (max(obs.dx, obs.dy) / 2) if obs.is_box else obs.radius
-                    if cross < size:
-                        dist = dot - size
-                        if dist < min_hit:
-                            min_hit = dist
+                dist = obs.ray_hit(px, py, rx, ry)
+                if dist is not None and dist < min_hit:
+                    min_hit = dist
 
             ranges[i] = max(0.0, min_hit)
 
