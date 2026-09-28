@@ -14,6 +14,11 @@ from pathlib import Path
 from urllib.request import urlopen
 
 REPO_DIR = Path(__file__).resolve().parent.parent
+# gz-transport discovery across Docker bridges and other interfaces can leave the Gazebo
+# world unreachable ("Gazebo world did not become responsive in time"). The orchestrator,
+# Gazebo and PX4 all run on this machine, so pin them to loopback unless told otherwise;
+# every child process inherits it.
+os.environ.setdefault("GZ_IP", "127.0.0.1")
 PX4_DIR = Path(os.path.expanduser("~/PX4-Autopilot"))
 HOST = os.environ.get("LESNAR_ORCH_HOST", "127.0.0.1")
 PORT = int(os.environ.get("LESNAR_ORCH_PORT", "8765"))

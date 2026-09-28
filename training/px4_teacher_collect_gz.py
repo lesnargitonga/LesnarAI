@@ -1005,6 +1005,13 @@ class SensorNoiseModel:
 # CLOSED-LOOP STUDENT CONTROLLER
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _no_grad():
+    # torch is optional: StudentController refuses to load without it, but this decorator
+    # runs when the class is defined, so it must not need torch. Without the fallback the
+    # whole bridge crashed at import whenever torch was missing.
+    return torch.no_grad() if torch is not None else (lambda f: f)
+
+
 class StudentController:
     """Loads a trained StudentNet and produces inference commands.
 
@@ -1033,7 +1040,7 @@ class StudentController:
         self.net.eval()
         self.device = device
 
-    @torch.no_grad()
+    @_no_grad()
     def infer(self, lidar: list[float], state_dict: dict) -> tuple[float, float, float, float]:
         """Produce (cmd_vx, cmd_vy, cmd_vz, cmd_yaw) from current sensor data.
 

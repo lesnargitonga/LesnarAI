@@ -3,7 +3,11 @@ set -euo pipefail
 
 # EXACT README SOP (Terminal 1): Start the Physics Engine
 cd "$HOME/PX4-Autopilot"
-export GZ_SIM_RESOURCE_PATH="$GZ_SIM_RESOURCE_PATH:$(pwd)/Tools/simulation/gz/models"
+# ${VAR:-} keeps set -u from killing Gazebo when the variable is not already set.
+export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:-}:$(pwd)/Tools/simulation/gz/models"
+# gz-transport discovery across Docker bridges and other interfaces can leave the world
+# unreachable; everything here runs on one machine, so loopback is enough.
+export GZ_IP="${GZ_IP:-127.0.0.1}"
 VERBOSITY="${LESNAR_GZ_VERBOSITY:-2}"
 WORLD_SDF="${LESNAR_GZ_WORLD_SDF:-$HOME/workspace/LesnarAI/obstacles.sdf}"
 
