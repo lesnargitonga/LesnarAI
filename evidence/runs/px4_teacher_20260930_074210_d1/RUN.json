@@ -1,0 +1,10 @@
+{
+  "data_root": "/home/lesnar/LesnarData",
+  "effective_drones": 1,
+  "obstacles_sdf_sha256": "9340b64c4b4cea09652d08d8de6263c8c3bdc0d28788a884ad0cd0b2d2e36f3b",
+  "repo_git_rev": "3ba2677c24db9047eb5a62173f374b2daf3d645c",
+  "requested_drones": 1,
+  "run_id": "px4_teacher_20260930_074210_d1",
+  "started_at": 1790743330.0433176,
+  "world": "obstacles"
+}

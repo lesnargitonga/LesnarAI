@@ -1,0 +1,76 @@
+{
+  "dispatched_at_utc": "2026-09-30T04:42:42Z",
+  "payload": {
+    "drone_id": "x500_0",
+    "action": "mission_start",
+    "params": {
+      "waypoints": [
+        [
+          47.39819547981117,
+          8.5461633,
+          10.0
+        ],
+        [
+          47.39819547981117,
+          8.546495075941936,
+          10.0
+        ],
+        [
+          47.3979709,
+          8.546495075941936,
+          10.0
+        ],
+        [
+          47.3979709,
+          8.5461633,
+          10.0
+        ]
+      ],
+      "mission_type": "TRAINING"
+    },
+    "timestamp": "2026-09-30T04:42:42.768273+00:00"
+  },
+  "subscribers": 1,
+  "method": "Published directly on the Redis 'commands' channel in the format backend/app.py _publish_command uses, not through the backend API. The waypoints are the console's START TRAINING mission as frontend/src/components/DroneList.js builds it: a 25 m box at 10 m around the drone's position at dispatch.",
+  "outcome": "completed",
+  "landed_below_0_5_m": true,
+  "bridge": {
+    "ref": "main",
+    "commit": "3ba2677c24db9047eb5a62173f374b2daf3d645c",
+    "tracked_files_changed": 0
+  },
+  "gazebo_launch": {
+    "GZ_IP": "127.0.0.1",
+    "headless_rendering": true,
+    "viewer_window": false
+  },
+  "world": {
+    "source": "obstacles.sdf",
+    "source_sha256": "9340b64c4b4cea09652d08d8de6263c8c3bdc0d28788a884ad0cd0b2d2e36f3b",
+    "references": {
+      "PX4-Autopilot/Tools/simulation/gz/worlds/default.sdf": "457a363a22c437b788a4aaf1e2335aa149efce4e5b988cdc108065663cd879b2",
+      "PX4-Autopilot/src/modules/simulation/gz_bridge/server.config": "60871c73e32ecde05e008aaf995e1b9c09906ca3dacb143c595522c68d399172"
+    },
+    "px4_version": "v1.17.0-alpha1-1447-g885fe14ee6",
+    "added_plugins": [],
+    "skipped_px4_custom_plugins": [
+      "libOpticalFlowSystem.so",
+      "libGstCameraSystem.so"
+    ],
+    "added_spherical_coordinates": false,
+    "added_xml": [],
+    "unchanged": true,
+    "used_file": null,
+    "used_sha256": "9340b64c4b4cea09652d08d8de6263c8c3bdc0d28788a884ad0cd0b2d2e36f3b"
+  },
+  "teacher_log_lines_since_dispatch": [
+    "[2026-09-30T04:42:42Z] --> Received Command: mission_start",
+    "[2026-09-30T04:42:45Z] --> External mission armed; awaiting climb to 10.0m",
+    "[2026-09-30T04:42:55Z] --> External mission navigation engaged for waypoint 1",
+    "[2026-09-30T04:43:17Z] --> External mission advanced to waypoint 2/4",
+    "[2026-09-30T04:43:39Z] --> External mission advanced to waypoint 3/4",
+    "[2026-09-30T04:43:59Z] --> External mission advanced to waypoint 4/4",
+    "[2026-09-30T04:44:19Z] --> External mission completed",
+    "[2026-09-30T04:44:20Z] --> Received Command: land"
+  ]
+}
