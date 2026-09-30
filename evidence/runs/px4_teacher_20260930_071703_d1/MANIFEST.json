@@ -1,0 +1,40 @@
+{
+  "files": [
+    {
+      "bytes": 357,
+      "mtime": 1790741823.6654322,
+      "path": "RUN.json",
+      "sha256": "7e9909bd12c82780e3c5034ba8d8ecc1d053c74c6c53579db67ff6c7bf35f63d"
+    },
+    {
+      "bytes": 2673,
+      "mtime": 1790741967.4335992,
+      "path": "mission.json",
+      "sha256": "8b1fbb56f0dd88fbe9b163b444be67e4c09261c57292516d9a648060fb24fab7"
+    },
+    {
+      "bytes": 13715,
+      "mtime": 1790741967.408057,
+      "path": "teacher_live_0.log",
+      "sha256": "fea849365bfa145beb10b65078beb1ceee6a21add1c4bed924a770c70a8eb0d1"
+    },
+    {
+      "bytes": 634613,
+      "mtime": 1790741967.346057,
+      "path": "telemetry_live_0.csv",
+      "sha256": "4847cb10cfc995a544bfa1d858e7aff6450b0d427d8fb8af9385d12c05675c5a"
+    }
+  ],
+  "generated_at": 1790741970.5075278,
+  "run": {
+    "data_root": "/home/lesnar/LesnarData",
+    "effective_drones": 1,
+    "obstacles_sdf_sha256": "9340b64c4b4cea09652d08d8de6263c8c3bdc0d28788a884ad0cd0b2d2e36f3b",
+    "repo_git_rev": "3ba2677c24db9047eb5a62173f374b2daf3d645c",
+    "requested_drones": 1,
+    "run_id": "px4_teacher_20260930_071703_d1",
+    "started_at": 1790741823.6615107,
+    "world": "obstacles"
+  },
+  "schema": 1
+}
